@@ -6,7 +6,7 @@ if (!BOT_TOKEN) console.error('❌ BOT_TOKEN не установлен!');
 const CHANNEL_USERNAME = 'spektrminda';
 const CHANNEL_ID = -1002696885166;
 const CHAT_ID = -1002899007927;
-const ADMIN_CHAT_ID = -1002818324656;
+const ADMIN_CHAT_ID = -1002818324656; // ОБНОВЛЕНО!
 const ADMIN_IDS = [1465194766, 2032240231, 1319314897];
 const ADMIN_NAMES = {
   1465194766: 'Спектр ♦️',
@@ -410,22 +410,16 @@ bot.on('message', safeHandler(async (ctx) => {
     if (replied.forward_from && replied.forward_from.id) {
       originalId = replied.forward_from.id;
     }
-    if (!originalId) {
-      const sourceText = (replied.text || replied.caption || '').toString();
-      const idMatch =
-        sourceText.match(/🆔\s*ID[:\s]*([0-9]{4,})/) ||
-        sourceText.match(/ID[:\s]*([0-9]{4,})/i) ||
-        sourceText.match(/\b([0-9]{5,})\b/);
-      if (idMatch) originalId = parseInt(idMatch[1], 10);
+    else if (replied.text || replied.caption) {
+      const sourceText = (replied.text || replied.caption).toString();
+      const idMatch = sourceText.match(/🆔\s*ID[:\s]*([0-9]{7,})/) ||
+                      sourceText.match(/ID[:\s]*([0-9]{7,})/i);
+      if (idMatch) {
+        originalId = parseInt(idMatch[1], 10);
+      }
     }
 
-    if (!originalId && replied.text && replied.text.includes('Новое сообщение из ЛС')) {
-      const idMatch = replied.text.match(/🆔 ID: (\d+)/);
-      if (idMatch) originalId = parseInt(idMatch[1], 10);
-    }
-
-    if (!originalId || Number.isNaN(originalId)) {
-      await ctx.reply('❌ Не удалось определить пользователя.');
+    if (!originalId || isNaN(originalId)) {
       return;
     }
 
@@ -439,6 +433,9 @@ bot.on('message', safeHandler(async (ctx) => {
       if (message.document) await ctx.telegram.sendDocument(originalId, message.document.file_id, { caption: message.caption || '' });
       if (message.sticker) await ctx.telegram.sendSticker(originalId, message.sticker.file_id);
       if (message.animation) await ctx.telegram.sendAnimation(originalId, message.animation.file_id, { caption: message.caption || '' });
+      if (message.audio) {
+        await ctx.telegram.sendAudio(originalId, message.audio.file_id, { caption: message.caption || '' });
+      }
       if (message.poll) {
         const p = message.poll;
         const options = p.options.map(o => o.text);
@@ -481,6 +478,12 @@ bot.on('message', safeHandler(async (ctx) => {
       if (message.document) await ctx.telegram.sendDocument(targetChat, message.document.file_id, { caption: message.caption || '', reply_to_message_id: targetMessage });
       if (message.sticker) await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, { reply_to_message_id: targetMessage });
       if (message.animation) await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { caption: message.caption || '', reply_to_message_id: targetMessage });
+      if (message.audio) {
+        await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
+          caption: message.caption || '', 
+          reply_to_message_id: targetMessage 
+        });
+      }
       if (message.poll) {
         const p = message.poll;
         const options = p.options.map(o => o.text);
