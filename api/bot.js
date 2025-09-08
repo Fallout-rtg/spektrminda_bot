@@ -35,40 +35,61 @@ const processedPosts = new Set();
 const userFirstMessages = new Set();
 const waitingForChatName = new Map();
 
+// РЕШЕНИЕ 2: УЛУЧШЕННАЯ ФУНКЦИЯ ЗАГРУЗКИ РАЗРЕШЕННЫХ ЧАТОВ
 async function loadAllowedChats() {
   try {
-    const message = await bot.telegram.getChat(RED_STAR_CHANNEL_ID);
-    console.log('Информация о канале:', message);
+    console.log(`🔄 Загрузка разрешённых чатов из канала ${RED_STAR_CHANNEL_ID}...`);
     
-    const messages = await bot.telegram.getChatHistory(RED_STAR_CHANNEL_ID, 10);
+    // Получаем историю сообщений канала
+    const messages = await bot.telegram.getChatHistory(RED_STAR_CHANNEL_ID, 20);
     const postMessage = messages.find(m => 
-      m.text && m.text.includes('Разрешённые чаты:')
+      m.text && typeof m.text === 'string' && m.text.includes('Разрешённые чаты:')
     );
     
-    if (postMessage) {
-      const lines = postMessage.text.split('\n');
-      const chats = [];
+    if (!postMessage) {
+      console.error('❌ Сообщение с разрешёнными чатами не найдено в истории канала.');
+      return;
+    }
+    
+    console.log('✅ Сообщение найдено. Начинаю парсинг...');
+    const lines = postMessage.text.split('\n');
+    const chats = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
       
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (line.startsWith('•')) {
-          const name = line.substring(1).trim();
-          const nextLine = lines[i + 1];
-          if (nextLine && nextLine.startsWith('ID:')) {
-            const id = parseInt(nextLine.replace('ID:', '').trim());
+      // Ищем строки с названиями чатов
+      if (line.startsWith('•')) {
+        const name = line.substring(1).trim();
+        // Проверяем следующую строку на наличие ID
+        if (i + 1 < lines.length) {
+          const nextLine = lines[i + 1].trim();
+          const idMatch = nextLine.match(/ID:\s*(-?\d+)/);
+          
+          if (idMatch) {
+            const id = parseInt(idMatch[1], 10);
             if (!isNaN(id)) {
               chats.push({ id, name });
-              i++;
+              i++; // Пропускаем следующую строку, так как она уже обработана
+              console.log(`✅ Добавлен чат: ${name} (${id})`);
             }
           }
         }
       }
-      
-      ALLOWED_CHATS = chats;
-      console.log('Загружены разрешённые чаты:', ALLOWED_CHATS);
     }
+    
+    ALLOWED_CHATS = chats;
+    console.log(`✅ Загружено ${ALLOWED_CHATS.length} разрешённых чатов.`);
+    
   } catch (error) {
-    console.error('Ошибка при загрузке разрешённых чатов:', error);
+    console.error('❌ Ошибка при загрузке разрешённых чатов:', error.message);
+    // Отправляем сообщение об ошибке админу
+    try {
+      await bot.telegram.sendMessage(
+        ADMIN_CHAT_ID, 
+        `❌ Ошибка загрузки разрешённых чатов: ${error.message}`
+      );
+    } catch (e) {}
   }
 }
 
@@ -216,6 +237,7 @@ bot.help(restrictedCommand(async (ctx) => {
 /comment_text — показать текст комментариев под постами
 /adm — анкета на вступление в Совет Элит
 /appeal — анкета для обжалования наказания
+/reload_chats — перезагрузить список чатов [НОВОЕ]
 
 <b>Как отвечать</b>:
 💡 В ЛС: пересланное сообщение от пользователя -> ответьте на него — бот пересылает ответ пользователю.
@@ -243,6 +265,18 @@ bot.command('info', restrictedCommand(async (ctx) => {
 
 bot.command('test', restrictedCommand(async (ctx) => {
   await ctx.reply('✅ Бот активен и работает в штатном режиме!');
+}, { adminOnly: true }));
+
+// РЕШЕНИЕ 3: КОМАНДА ПЕРЕЗАГРУЗКИ ЧАТОВ
+bot.command('reload_chats', restrictedCommand(async (ctx) => {
+  try {
+    await ctx.reply('🔄 Перезагружаю список чатов...');
+    await loadAllowedChats();
+    await ctx.reply(`✅ Готово! Загружено ${ALLOWED_CHATS.length} чатов.`);
+  } catch (error) {
+    console.error('Ошибка при перезагрузке чатов:', error);
+    await ctx.reply('❌ Произошла ошибка при перезагрузке чатов.');
+  }
 }, { adminOnly: true }));
 
 bot.command('ida', restrictedCommand(async (ctx) => {
@@ -277,7 +311,9 @@ bot.command('idr', restrictedCommand(async (ctx) => {
 }, { adminOnly: true }));
 
 bot.command('allowed_chats', restrictedCommand(async (ctx) => {
-  if (ALLOWED_CHATS.length === 0) return ctx.reply('📝 Список пуст.');
+  if (ALLOWED_CHATS.length === 0) {
+    return ctx.reply('📝 Список пуст. Используйте /reload_chats для загрузки чатов из канала.');
+  }
   
   let chatList = '📝 Разрешённые чаты:\n';
   ALLOWED_CHATS.forEach(chat => {
@@ -403,15 +439,19 @@ bot.on('message', safeHandler(async (ctx) => {
     }
   }
 
+  // ИСПРАВЛЕННЫЙ БЛОК: Ответ админов на пересланные сообщения
   if (isAdmin(ctx) && chatId === ADMIN_CHAT_ID && message.reply_to_message) {
     let originalId = null;
     const replied = message.reply_to_message;
 
+    // 1. Пытаемся получить ID из пересланного сообщения
     if (replied.forward_from && replied.forward_from.id) {
       originalId = replied.forward_from.id;
     }
+    // 2. Если это не сработало, пытаемся извлечь ID из текста сообщения (например, из уведомления бота)
     else if (replied.text || replied.caption) {
       const sourceText = (replied.text || replied.caption).toString();
+      // Ищем ID в формате "🆔 ID: 123456789"
       const idMatch = sourceText.match(/🆔\s*ID[:\s]*([0-9]{7,})/) ||
                       sourceText.match(/ID[:\s]*([0-9]{7,})/i);
       if (idMatch) {
@@ -419,8 +459,9 @@ bot.on('message', safeHandler(async (ctx) => {
       }
     }
 
+    // 3. Если ID так и не найден, просто выходим (не спамим ошибкой)
     if (!originalId || isNaN(originalId)) {
-      return;
+      return; // Просто выходим, не отправляя сообщение об ошибке
     }
 
     try {
@@ -433,6 +474,7 @@ bot.on('message', safeHandler(async (ctx) => {
       if (message.document) await ctx.telegram.sendDocument(originalId, message.document.file_id, { caption: message.caption || '' });
       if (message.sticker) await ctx.telegram.sendSticker(originalId, message.sticker.file_id);
       if (message.animation) await ctx.telegram.sendAnimation(originalId, message.animation.file_id, { caption: message.caption || '' });
+      // ДОБАВЛЕНО: обработка аудио
       if (message.audio) {
         await ctx.telegram.sendAudio(originalId, message.audio.file_id, { caption: message.caption || '' });
       }
@@ -466,6 +508,7 @@ bot.on('message', safeHandler(async (ctx) => {
     return;
   }
 
+  // ИСПРАВЛЕННЫЙ БЛОК: Ответ по ссылке с поддержкой аудио
   if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
     const { chatId: targetChat, messageId: targetMessage } = REPLY_LINKS[userId];
     try {
@@ -478,6 +521,7 @@ bot.on('message', safeHandler(async (ctx) => {
       if (message.document) await ctx.telegram.sendDocument(targetChat, message.document.file_id, { caption: message.caption || '', reply_to_message_id: targetMessage });
       if (message.sticker) await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, { reply_to_message_id: targetMessage });
       if (message.animation) await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { caption: message.caption || '', reply_to_message_id: targetMessage });
+      // ДОБАВЛЕНО: обработка аудио
       if (message.audio) {
         await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
           caption: message.caption || '', 
@@ -563,9 +607,12 @@ bot.on('message', safeHandler(async (ctx) => {
 
 setInterval(() => checkBotChats(bot), 5 * 60 * 1000);
 
+// Загружаем чаты при запуске с улучшенной обработкой ошибок
 setTimeout(() => {
   loadAllowedChats().then(() => {
-    console.log('Разрешённые чаты загружены');
+    console.log('Инициализация завершена');
+  }).catch(error => {
+    console.error('Ошибка при инициализации:', error);
   });
 }, 3000);
 
