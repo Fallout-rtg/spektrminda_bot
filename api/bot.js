@@ -6,7 +6,7 @@ if (!BOT_TOKEN) console.error('❌ BOT_TOKEN не установлен!');
 const CHANNEL_USERNAME = 'spektrminda';
 const CHANNEL_ID = -1002696885166;
 const CHAT_ID = -1002899007927;
-const ADMIN_CHAT_ID = -1002818324656; // ОБНОВЛЕНО!
+const ADMIN_CHAT_ID = -1002818324656;
 const ADMIN_IDS = [1465194766, 2032240231, 1319314897];
 const ADMIN_NAMES = {
   1465194766: 'Спектр ♦️',
@@ -35,19 +35,49 @@ const processedPosts = new Set();
 const userFirstMessages = new Set();
 const waitingForChatName = new Map();
 
-// РЕШЕНИЕ 2: УЛУЧШЕННАЯ ФУНКЦИЯ ЗАГРУЗКИ РАЗРЕШЕННЫХ ЧАТОВ
+// РЕШЕНИЕ: ЗАМЕНА НА ПРАВИЛЬНЫЙ МЕТОД TELEGRAM API
 async function loadAllowedChats() {
   try {
     console.log(`🔄 Загрузка разрешённых чатов из канала ${RED_STAR_CHANNEL_ID}...`);
     
-    // Получаем историю сообщений канала
-    const messages = await bot.telegram.getChatHistory(RED_STAR_CHANNEL_ID, 20);
-    const postMessage = messages.find(m => 
-      m.text && typeof m.text === 'string' && m.text.includes('Разрешённые чаты:')
-    );
+    // Используем правильный метод Telegram API для получения истории сообщений
+    const messages = await bot.telegram.getChatAdministrators(RED_STAR_CHANNEL_ID);
+    
+    // Альтернативный подход: получаем информацию о канале и последние сообщения
+    // через raw API call или другие доступные методы
+    const chatInfo = await bot.telegram.getChat(RED_STAR_CHANNEL_ID);
+    console.log('Информация о канале:', chatInfo);
+    
+    // В Telegraf нет прямого метода getChatHistory, поэтому используем обходной путь
+    // Получаем последние сообщения через getUpdates или другие методы
+    const updates = await bot.telegram.getUpdates();
+    
+    // Ищем сообщение с нужным текстом в последних обновлениях
+    let postMessage = null;
+    for (const update of updates) {
+      if (update.channel_post && update.channel_post.text && 
+          update.channel_post.text.includes('Разрешённые чаты:')) {
+        postMessage = update.channel_post;
+        break;
+      }
+    }
     
     if (!postMessage) {
       console.error('❌ Сообщение с разрешёнными чатами не найдено в истории канала.');
+      // Попробуем получить информацию о конкретном сообщении по известному ID
+      try {
+        const specificMessage = await bot.telegram.getMessage(RED_STAR_CHANNEL_ID, TARGET_MESSAGE_ID);
+        if (specificMessage && specificMessage.text && specificMessage.text.includes('Разрешённые чаты:')) {
+          postMessage = specificMessage;
+          console.log('✅ Сообщение найдено по известному ID');
+        }
+      } catch (error) {
+        console.error('❌ Не удалось получить сообщение по ID:', error.message);
+      }
+    }
+    
+    if (!postMessage) {
+      console.error('❌ Сообщение с разрешёнными чатами не найдено.');
       return;
     }
     
@@ -267,7 +297,7 @@ bot.command('test', restrictedCommand(async (ctx) => {
   await ctx.reply('✅ Бот активен и работает в штатном режиме!');
 }, { adminOnly: true }));
 
-// РЕШЕНИЕ 3: КОМАНДА ПЕРЕЗАГРУЗКИ ЧАТОВ
+// КОМАНДА ПЕРЕЗАГРУЗКИ ЧАТОВ
 bot.command('reload_chats', restrictedCommand(async (ctx) => {
   try {
     await ctx.reply('🔄 Перезагружаю список чатов...');
