@@ -15,6 +15,7 @@ const ADMIN_NAMES = {
 };
 const RED_STAR_CHANNEL_ID = -1003079596618;
 const ALLOWED_CHATS_MESSAGE_ID = 1762;
+const RED_STAR_POST_ID = 8;
 
 const COMMENT_TEXT = `<b>⚠️ Краткие правила комментариев:</b>
 
@@ -81,6 +82,24 @@ async function updateAllowedChatsMessage() {
     );
   } catch (error) {
     console.error('Ошибка при обновлении сообщения с чатами:', error);
+  }
+}
+
+async function updateRedStarChannelPost() {
+  try {
+    let text = '📝 Разрешённые чаты:\n';
+    ALLOWED_CHATS.forEach(chat => {
+      text += `• ${chat.name}\nID: ${chat.id}\n`;
+    });
+    
+    await bot.telegram.editMessageText(
+      RED_STAR_CHANNEL_ID, 
+      RED_STAR_POST_ID, 
+      null, 
+      text
+    );
+  } catch (error) {
+    console.error('Ошибка при обновлении поста в канале:', error);
   }
 }
 
@@ -266,6 +285,7 @@ bot.command('idr', restrictedCommand(async (ctx) => {
   if (index !== -1) {
     ALLOWED_CHATS.splice(index, 1);
     await updateAllowedChatsMessage();
+    await updateRedStarChannelPost();
     await ctx.reply(`✅ Чат ${chatId} удален.`);
   } else {
     await ctx.reply(`ℹ️ Чат ${chatId} не найден.`);
@@ -378,6 +398,7 @@ bot.on('message', safeHandler(async (ctx) => {
     waitingForChatName.delete(userId);
     
     await updateAllowedChatsMessage();
+    await updateRedStarChannelPost();
     await ctx.reply(`✅ Чат "${chatName}" (${chatIdToAdd}) добавлен.`);
     await checkBotChats(bot);
     return;
