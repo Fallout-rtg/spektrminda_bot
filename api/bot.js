@@ -7,11 +7,6 @@ const CHANNEL_USERNAME = 'spektrminda';
 const CHANNEL_ID = -1002696885166;
 const ADMIN_CHAT_ID = -1002818324656;
 const ADMIN_IDS = [1465194766, 2032240231, 1319314897];
-const ADMIN_NAMES = {
-  1465194766: 'Спектр ♦️',
-  2032240231: 'Советчик 📜',
-  1319314897: 'Устричный Комиссар 🏛️'
-};
 
 const ALLOWED_CHATS = [
   { id: -1002899007927, name: 'Комментарии канала Я Спектр ♦️' },
@@ -42,26 +37,46 @@ function safeHandler(handler) {
       await handler(ctx);
     } catch (err) {
       console.error('Ошибка в обработчике:', err);
-      try { await ctx.reply('❌ Произошла ошибка при обработке запроса. Попробуйте позже.'); } catch (e) {}
+      try { 
+        await ctx.reply('❌ Произошла ошибка при обработке запроса. Попробуйте позже.'); 
+      } catch (e) {}
     }
   };
 }
 
 function isAdmin(ctx) {
-  try { return ctx.from && ADMIN_IDS.includes(ctx.from.id); } catch { return false; }
+  try { 
+    return ctx.from && ADMIN_IDS.includes(ctx.from.id); 
+  } catch { 
+    return false; 
+  }
 }
 
 function isPrivate(ctx) {
-  try { return ctx.chat && ctx.chat.type === 'private'; } catch { return false; }
+  try { 
+    return ctx.chat && ctx.chat.type === 'private'; 
+  } catch { 
+    return false; 
+  }
 }
 
 function restrictedCommand(handler, { adminOnly = false } = {}) {
   return safeHandler(async (ctx) => {
     if (!isPrivate(ctx) && !isAdmin(ctx)) {
-      return ctx.reply('❌ Эту команду можно использовать только в ЛС.', { reply_to_message_id: ctx.message.message_id });
+      try {
+        await ctx.reply('❌ Эту команду можно использовать только в ЛС.', { 
+          reply_to_message_id: ctx.message.message_id 
+        });
+      } catch (e) {}
+      return;
     }
     if (adminOnly && !isAdmin(ctx)) {
-      return ctx.reply('❌ Только админам.', { reply_to_message_id: ctx.message.message_id });
+      try {
+        await ctx.reply('❌ Только админам.', { 
+          reply_to_message_id: ctx.message.message_id 
+        });
+      } catch (e) {}
+      return;
     }
     await handler(ctx);
   });
@@ -76,32 +91,53 @@ async function checkBotChats(botInstance) {
           '🚫 Этот бот работает только для канала @spektrminda.',
           { parse_mode: 'HTML', disable_web_page_preview: true }
         );
-      } catch (e) {}
+      } catch (e) {
+        console.error('Не удалось отправить сообщение о выходе:', e);
+      }
+      
       try {
         await botInstance.telegram.leaveChat(chatId);
-      } catch (e) {}
+        console.log(`Бот вышел из чата ${chatId}`);
+      } catch (e) {
+        console.error(`Не удалось выйти из чата ${chatId}:`, e);
+      }
+      
       ACTIVE_CHATS = ACTIVE_CHATS.filter(id => id !== chatId);
     }
   }
 }
 
 bot.on('chat_member', async (ctx) => {
-  const chat = ctx.chat;
-  const newMember = ctx.update.chat_member.new_chat_member;
+  try {
+    const chat = ctx.chat;
+    const newMember = ctx.update.chat_member.new_chat_member;
 
-  if (newMember.user.id === ctx.botInfo.id && chat.type !== 'private') {
-    if (!ALLOWED_CHATS.some(chatObj => chatObj.id === chat.id)) {
-      try {
-        await ctx.telegram.sendMessage(
-          chat.id,
-          '🚫 Этот бот работает только для канала @spektrminda.',
-          { parse_mode: 'HTML', disable_web_page_preview: true }
-        );
-        await ctx.telegram.leaveChat(chat.id);
-      } catch (err) {
-        console.error('Ошибка при выходе из группы:', err);
+    if (newMember.user.id === ctx.botInfo.id && chat.type !== 'private') {
+      if (!ALLOWED_CHATS.some(chatObj => chatObj.id === chat.id)) {
+        try {
+          await ctx.telegram.sendMessage(
+            chat.id,
+            '🚫 Этот бот работает только для канала @spektrminda.',
+            { parse_mode: 'HTML', disable_web_page_preview: true }
+          );
+        } catch (e) {
+          console.error('Не удалось отправить сообщение о выходе:', e);
+        }
+        
+        try {
+          await ctx.telegram.leaveChat(chat.id);
+          console.log(`Бот вышел из чата ${chat.id}`);
+        } catch (err) {
+          console.error('Ошибка при выходе из группы:', err);
+        }
+      } else {
+        if (!ACTIVE_CHATS.includes(chat.id)) {
+          ACTIVE_CHATS.push(chat.id);
+        }
       }
     }
+  } catch (err) {
+    console.error('Ошибка в обработчике chat_member:', err);
   }
 });
 
@@ -130,8 +166,8 @@ bot.start(restrictedCommand(async (ctx) => {
 — предложить идею,
 — задать вопрос администрации.
 
-🕓 Обычно отвечаем в течение 1–2 дней.<a href="https://static-sg.winudf.com/wupload/xy/aprojectadmin/FxsBnVvw.jpg">​</a>`;
-    
+🕓 Обычно отвечаем в течение 1–2 дней.`;
+
     await ctx.reply(greeting, {
       parse_mode: 'HTML',
       disable_web_page_preview: false
@@ -195,11 +231,22 @@ bot.command('comment_text', restrictedCommand(async (ctx) => {
 
 bot.command('adm', safeHandler(async (ctx) => {
   if (!isPrivate(ctx) && !isAdmin(ctx)) {
-    return ctx.reply('❌ Эту команду можно использовать только в ЛС.', { reply_to_message_id: ctx.message.message_id });
+    try {
+      await ctx.reply('❌ Эту команду можно использовать только в ЛС.', { 
+        reply_to_message_id: ctx.message.message_id 
+      });
+    } catch (e) {}
+    return;
   }
   
   const userName = ctx.from.first_name || ctx.from.username || '';
-  const currentTime = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const currentTime = new Date().toLocaleString('ru-RU', { 
+    timeZone: 'Europe/Moscow', 
+    hour: '2-digit', 
+    minute: '2-digit', 
+    second: '2-digit' 
+  });
+  
   const admText = `<b>📜 Анкета кандидата в администрацию</b>
 
 💬 Привет, ${userName}! Заполни эту анкету, если хочешь стать администратором. Отвечай честно — оцениваем не только опыт, но и личные качества.
@@ -229,12 +276,18 @@ bot.command('adm', safeHandler(async (ctx) => {
 <b>1️⃣2️⃣ Почему ты хочешь стать админом?</b>
 
 <b>1️⃣3️⃣ Чем ты можешь быть полезен чату?</b>`;
+  
   await ctx.reply(admText, { parse_mode: 'HTML', disable_web_page_preview: true });
 }));
 
 bot.command('appeal', safeHandler(async (ctx) => {
   if (!isPrivate(ctx) && !isAdmin(ctx)) {
-    return ctx.reply('❌ Эту команду можно использовать только в ЛС.', { reply_to_message_id: ctx.message.message_id });
+    try {
+      await ctx.reply('❌ Эту команду можно использовать только в ЛС.', { 
+        reply_to_message_id: ctx.message.message_id 
+      });
+    } catch (e) {}
+    return;
   }
   
   const appealText = `<b>📄 АНКЕТА ДЛЯ ОБЖАЛОВАНИЯ НАКАЗАНИЯ</b>
@@ -270,6 +323,7 @@ bot.command('appeal', safeHandler(async (ctx) => {
 bot.on('message', safeHandler(async (ctx) => {
   const message = ctx.message;
   if (!message) return;
+  
   const userId = message.from.id;
   const chatId = message.chat.id;
 
@@ -281,15 +335,32 @@ bot.on('message', safeHandler(async (ctx) => {
     const isBotAdded = message.new_chat_members.some(m => m.is_bot && m.id === ctx.botInfo.id);
     if (isBotAdded) {
       if (!ACTIVE_CHATS.includes(chatId)) ACTIVE_CHATS.push(chatId);
+      
       if (!ALLOWED_CHATS.some(chat => chat.id === chatId)) {
         try {
-          await ctx.reply('🚫 Этот бот работает только для канала @spektrminda.', { parse_mode: 'HTML', disable_web_page_preview: true });
-        } catch (e) {}
-        try { await new Promise(r => setTimeout(r, 1500)); } catch {}
-        try { await ctx.leaveChat(); } catch (e) {}
+          await ctx.reply('🚫 Этот бот работает только для канала @spektrminda.', { 
+            parse_mode: 'HTML', 
+            disable_web_page_preview: true 
+          });
+        } catch (e) {
+          console.error('Не удалось отправить сообщение о выходе:', e);
+        }
+        
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        } catch {}
+        
+        try { 
+          await ctx.leaveChat(); 
+          console.log(`Бот вышел из чата ${chatId}`);
+        } catch (e) {
+          console.error(`Не удалось выйти из чата ${chatId}:`, e);
+        }
+        
         ACTIVE_CHATS = ACTIVE_CHATS.filter(id => id !== chatId);
       }
     }
+    return;
   }
 
   if (isAdmin(ctx) && chatId === ADMIN_CHAT_ID && message.reply_to_message) {
@@ -298,8 +369,7 @@ bot.on('message', safeHandler(async (ctx) => {
 
     if (replied.forward_from && replied.forward_from.id) {
       originalId = replied.forward_from.id;
-    }
-    else if (replied.text || replied.caption) {
+    } else if (replied.text || replied.caption) {
       const sourceText = (replied.text || replied.caption).toString();
       const idMatch = sourceText.match(/🆔\s*ID[:\s]*([0-9]{7,})/) ||
                       sourceText.match(/ID[:\s]*([0-9]{7,})/i);
@@ -313,25 +383,46 @@ bot.on('message', safeHandler(async (ctx) => {
     }
 
     try {
-      const sendOptions = { reply_to_message_id: message.reply_to_message.message_id };
+      const sendOptions = {};
       
       if (message.text) {
-        await ctx.telegram.sendMessage(originalId, message.text, { ...sendOptions, disable_web_page_preview: true });
+        await ctx.telegram.sendMessage(originalId, message.text, { 
+          ...sendOptions, 
+          disable_web_page_preview: true 
+        });
       } else if (message.photo) {
         const fileId = message.photo[message.photo.length - 1].file_id;
-        await ctx.telegram.sendPhoto(originalId, fileId, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendPhoto(originalId, fileId, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.video) {
-        await ctx.telegram.sendVideo(originalId, message.video.file_id, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendVideo(originalId, message.video.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.document) {
-        await ctx.telegram.sendDocument(originalId, message.document.file_id, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendDocument(originalId, message.document.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.sticker) {
         await ctx.telegram.sendSticker(originalId, message.sticker.file_id, sendOptions);
       } else if (message.animation) {
-        await ctx.telegram.sendAnimation(originalId, message.animation.file_id, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendAnimation(originalId, message.animation.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.audio) {
-        await ctx.telegram.sendAudio(originalId, message.audio.file_id, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendAudio(originalId, message.audio.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.voice) {
-        await ctx.telegram.sendVoice(originalId, message.voice.file_id, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendVoice(originalId, message.voice.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.video_note) {
         await ctx.telegram.sendVideoNote(originalId, message.video_note.file_id, sendOptions);
       } else if (message.poll) {
@@ -344,10 +435,14 @@ bot.on('message', safeHandler(async (ctx) => {
         });
       }
       
-      await ctx.reply('✅ Ответ отправлен пользователю.', { reply_to_message_id: message.message_id });
+      await ctx.reply('✅ Ответ отправлен пользователю.', { 
+        reply_to_message_id: message.message_id 
+      });
     } catch (err) {
       console.error('Ошибка при отправке ответа пользователю:', err);
-      await ctx.reply('❌ Не удалось отправить ответ.', { reply_to_message_id: message.message_id });
+      await ctx.reply('❌ Не удалось отправить ответ.', { 
+        reply_to_message_id: message.message_id 
+      });
     }
     return;
   }
@@ -385,18 +480,33 @@ bot.on('message', safeHandler(async (ctx) => {
       const sendOptions = shouldReply ? { reply_to_message_id: targetMessage } : {};
       
       if (message.text) {
-        await ctx.telegram.sendMessage(targetChat, message.text, { ...sendOptions, disable_web_page_preview: true });
+        await ctx.telegram.sendMessage(targetChat, message.text, { 
+          ...sendOptions, 
+          disable_web_page_preview: true 
+        });
       } else if (message.photo) {
         const fileId = message.photo[message.photo.length - 1].file_id;
-        await ctx.telegram.sendPhoto(targetChat, fileId, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendPhoto(targetChat, fileId, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.video) {
-        await ctx.telegram.sendVideo(targetChat, message.video.file_id, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendVideo(targetChat, message.video.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.document) {
-        await ctx.telegram.sendDocument(targetChat, message.document.file_id, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendDocument(targetChat, message.document.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.sticker) {
         await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, sendOptions);
       } else if (message.animation) {
-        await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { ...sendOptions, caption: message.caption || '' });
+        await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
       } else if (message.audio) {
         await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
           ...sendOptions, 
@@ -423,7 +533,7 @@ bot.on('message', safeHandler(async (ctx) => {
       delete REPLY_LINKS[userId];
     } catch (err) {
       console.error('Ошибка при пересылке по ссылке:', err);
-      await ctx.reply(`❌ Ошибка при пересылке: ${err?.description || err?.message || err}`);
+      await ctx.reply(`❌ Ошибка при пересылке: ${err?.description || err?.message || 'Неизвестная ошибка'}`);
     }
     return;
   }
@@ -447,6 +557,9 @@ bot.on('message', safeHandler(async (ctx) => {
       }
     } catch (err) {
       console.error('Ошибка при пересылке сообщения админам:', err);
+      try {
+        await ctx.reply('❌ Не удалось отправить ваше сообщение администраторам. Попробуйте позже.');
+      } catch (e) {}
     }
     return;
   }
@@ -482,11 +595,13 @@ bot.on('message', safeHandler(async (ctx) => {
       processedPosts.add(message.forward_from_message_id);
     } catch (err) {
       console.error('Ошибка при отправке комментария:', err);
-      await ctx.telegram.sendMessage(
-        ADMIN_CHAT_ID, 
-        `❌ Не удалось отправить комментарий!\nОшибка: ${err?.message || err}`, 
-        { parse_mode: 'HTML', disable_web_page_preview: true }
-      );
+      try {
+        await ctx.telegram.sendMessage(
+          ADMIN_CHAT_ID, 
+          `❌ Не удалось отправить комментарий!\nОшибка: ${err?.message || err}`, 
+          { parse_mode: 'HTML', disable_web_page_preview: true }
+        );
+      } catch (e) {}
     }
     return;
   }
