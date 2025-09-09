@@ -5,7 +5,6 @@ if (!BOT_TOKEN) console.error('❌ BOT_TOKEN не установлен!');
 
 const CHANNEL_USERNAME = 'spektrminda';
 const CHANNEL_ID = -1002696885166;
-const CHAT_ID = -1002899007927;
 const ADMIN_CHAT_ID = -1002818324656;
 const ADMIN_IDS = [1465194766, 2032240231, 1319314897];
 const ADMIN_NAMES = {
@@ -13,9 +12,12 @@ const ADMIN_NAMES = {
   2032240231: 'Советчик 📜',
   1319314897: 'Устричный Комиссар 🏛️'
 };
-const RED_STAR_CHANNEL_ID = -1003079596618;
-const ALLOWED_CHATS_MESSAGE_ID = 1762;
-const RED_STAR_POST_ID = 8;
+
+const ALLOWED_CHATS = [
+  { id: -1002899007927, name: 'Комментарии канала Я Спектр ♦️' },
+  { id: -1002818324656, name: 'Чат администрации 🏛️' },
+  { id: -1002894920473, name: 'Основной чат 🧨' }
+];
 
 const COMMENT_TEXT = `<b>⚠️ Краткие правила комментариев:</b>
 
@@ -29,88 +31,10 @@ const COMMENT_TEXT = `<b>⚠️ Краткие правила комментар
 
 const bot = new Telegraf(BOT_TOKEN);
 
-let ALLOWED_CHATS = [];
 let ACTIVE_CHATS = [];
 let REPLY_LINKS = {};
 const processedPosts = new Set();
 const userFirstMessages = new Set();
-const waitingForChatName = new Map();
-
-async function loadAllowedChats() {
-  try {
-    const specificMessage = await bot.telegram.getMessage(ADMIN_CHAT_ID, ALLOWED_CHATS_MESSAGE_ID);
-    if (specificMessage && specificMessage.text && specificMessage.text.includes('Разрешённые чаты:')) {
-      const lines = specificMessage.text.split('\n');
-      const chats = [];
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (line.startsWith('•')) {
-          const name = line.substring(1).trim();
-          if (i + 1 < lines.length) {
-            const nextLine = lines[i + 1].trim();
-            const idMatch = nextLine.match(/ID:\s*(-?\d+)/);
-            if (idMatch) {
-              const id = parseInt(idMatch[1], 10);
-              if (!isNaN(id)) {
-                chats.push({ id, name });
-                i++;
-              }
-            }
-          }
-        }
-      }
-      ALLOWED_CHATS = chats;
-      console.log(`✅ Загружено ${ALLOWED_CHATS.length} разрешённых чатов из сообщения`);
-      
-      await updateRedStarChannelPost();
-    }
-  } catch (error) {
-    console.error('❌ Ошибка при загрузке чатов:', error);
-  }
-}
-
-async function updateAllowedChatsMessage() {
-  try {
-    let text = '📝 Разрешённые чаты:\n';
-    if (ALLOWED_CHATS.length === 0) {
-      text += 'Список пуст. Используйте /ida чтобы добавить чат.';
-    } else {
-      ALLOWED_CHATS.forEach(chat => {
-        text += `• ${chat.name}\nID: ${chat.id}\n`;
-      });
-    }
-    
-    await bot.telegram.editMessageText(
-      ADMIN_CHAT_ID, 
-      ALLOWED_CHATS_MESSAGE_ID, 
-      null, 
-      text
-    );
-    console.log('✅ Сообщение с чатами обновлено');
-  } catch (error) {
-    console.error('❌ Ошибка при обновлении сообщения с чатами:', error);
-  }
-}
-
-async function updateRedStarChannelPost() {
-  try {
-    let text = '📝 Разрешённые чаты:\n';
-    ALLOWED_CHATS.forEach(chat => {
-      text += `• ${chat.name}\nID: ${chat.id}\n`;
-    });
-    
-    await bot.telegram.editMessageText(
-      RED_STAR_CHANNEL_ID, 
-      RED_STAR_POST_ID, 
-      null, 
-      text
-    );
-    console.log('✅ Пост в канале "Красная звезда" обновлён');
-  } catch (error) {
-    console.error('❌ Ошибка при обновлении поста в канале:', error);
-  }
-}
 
 function safeHandler(handler) {
   return async (ctx) => {
@@ -149,7 +73,7 @@ async function checkBotChats(botInstance) {
       try {
         await botInstance.telegram.sendMessage(
           chatId,
-          '🚫 Этот чат не разрешён для работы бота.\nЕсли хотите, чтобы бот снова работал здесь, обратитесь к <a href="https://t.me/red_star_development">Красной звезде</a>.',
+          '🚫 Этот бот работает только для канала @spektrminda.',
           { parse_mode: 'HTML', disable_web_page_preview: true }
         );
       } catch (e) {}
@@ -170,7 +94,7 @@ bot.on('chat_member', async (ctx) => {
       try {
         await ctx.telegram.sendMessage(
           chat.id,
-          '🚫 Этот чат не разрешён для работы бота.\nЕсли хотите, чтобы бот снова работал здесь, обратитесь к <a href="https://t.me/red_star_development">Красной звезе</a>.',
+          '🚫 Этот бот работает только для канала @spektrminda.',
           { parse_mode: 'HTML', disable_web_page_preview: true }
         );
         await ctx.telegram.leaveChat(chat.id);
@@ -192,9 +116,9 @@ bot.start(restrictedCommand(async (ctx) => {
 
   if (isAdmin(ctx)) {
     let greeting = '';
-    if (userID === 1465194766) greeting = `👑 Приветствую, Спектр ♦️! Рад служить Вам и помогать управлять каналу! 👑`;
-    else if (userID === 2032240231) greeting = `⚜️ Здравствуйте, Советчик 📜! Готов выполнять ваши приказы и поддерживать порядок в канале.`;
-    else if (userID === 1319314897) greeting = `🏛️ Приветствую, Устричный Комиссар 🏛️! Готов к выполнению задач и поддержке работы канала.`;
+    if (userID === 1465194766) greeting = `👑 Приветствую, Спектр ♦️!`;
+    else if (userID === 2032240231) greeting = `⚜️ Здравствуйте, Советчик 📜!`;
+    else if (userID === 1319314897) greeting = `🏛️ Приветствую, Устричный Комиссар 🏛️!`;
     greeting += `\n\nИспользуйте /help для списка команд.`;
     await ctx.reply(greeting);
   } else {
@@ -223,13 +147,10 @@ bot.help(restrictedCommand(async (ctx) => {
 /help — показать это сообщение
 /info — информация о боте
 /test — проверка работоспособности
-/ida ID_чата — добавить чат в разрешённые (затем отправить название)
-/idr ID_чата — удалить чат из разрешённых
 /allowed_chats — показать список разрешённых чатов
 /comment_text — показать текст комментариев под постами
 /adm — анкета на вступление в Совет Элит
 /appeal — анкета для обжалования наказания
-/reload_chats — перезагрузить список чатов
 
 <b>Как отвечать</b>:
 💡 В ЛС: пересланное сообщение от пользователя -> ответьте на него — бот пересылает ответ пользователю.
@@ -259,54 +180,7 @@ bot.command('test', restrictedCommand(async (ctx) => {
   await ctx.reply('✅ Бот активен и работает в штатном режиме!');
 }, { adminOnly: true }));
 
-bot.command('reload_chats', restrictedCommand(async (ctx) => {
-  try {
-    await ctx.reply('🔄 Перезагружаю список чатов...');
-    await loadAllowedChats();
-    await ctx.reply(`✅ Готово! Загружено ${ALLOWED_CHATS.length} чатов.`);
-  } catch (error) {
-    console.error('Ошибка при перезагрузке чатов:', error);
-    await ctx.reply('❌ Произошла ошибка при перезагрузке чатов.');
-  }
-}, { adminOnly: true }));
-
-bot.command('ida', restrictedCommand(async (ctx) => {
-  const args = (ctx.message.text || '').split(' ').filter(Boolean);
-  if (args.length < 2) return ctx.reply('❌ Укажите ID чата: /ida <ID>');
-  const chatId = parseInt(args[1], 10);
-  if (isNaN(chatId)) return ctx.reply('❌ Неверный формат ID.');
-  
-  if (ALLOWED_CHATS.some(chat => chat.id === chatId)) {
-    return ctx.reply(`ℹ️ Чат ${chatId} уже в списке.`);
-  }
-  
-  waitingForChatName.set(ctx.from.id, chatId);
-  await ctx.reply('✅ ID чата принят. Теперь отправьте название чата:');
-}, { adminOnly: true }));
-
-bot.command('idr', restrictedCommand(async (ctx) => {
-  const args = (ctx.message.text || '').split(' ').filter(Boolean);
-  if (args.length < 2) return ctx.reply('❌ Укажите ID чата: /idr <ID>');
-  const chatId = parseInt(args[1], 10);
-  if (isNaN(chatId)) return ctx.reply('❌ Неверный формат ID.');
-  
-  const index = ALLOWED_CHATS.findIndex(chat => chat.id === chatId);
-  if (index !== -1) {
-    ALLOWED_CHATS.splice(index, 1);
-    await updateAllowedChatsMessage();
-    await updateRedStarChannelPost();
-    await ctx.reply(`✅ Чат ${chatId} удален.`);
-  } else {
-    await ctx.reply(`ℹ️ Чат ${chatId} не найден.`);
-  }
-  await checkBotChats(bot);
-}, { adminOnly: true }));
-
 bot.command('allowed_chats', restrictedCommand(async (ctx) => {
-  if (ALLOWED_CHATS.length === 0) {
-    return ctx.reply('📝 Список пуст. Используйте /reload_chats для загрузки чатов из канала.');
-  }
-  
   let chatList = '📝 Разрешённые чаты:\n';
   ALLOWED_CHATS.forEach(chat => {
     chatList += `• ${chat.name}\nID: ${chat.id}\n`;
@@ -399,20 +273,6 @@ bot.on('message', safeHandler(async (ctx) => {
   const userId = message.from.id;
   const chatId = message.chat.id;
 
-  if (waitingForChatName.has(userId) && !message.text.startsWith('/')) {
-    const chatIdToAdd = waitingForChatName.get(userId);
-    const chatName = message.text.trim() || 'Нет имени';
-    
-    ALLOWED_CHATS.push({ id: chatIdToAdd, name: chatName });
-    waitingForChatName.delete(userId);
-    
-    await updateAllowedChatsMessage();
-    await updateRedStarChannelPost();
-    await ctx.reply(`✅ Чат "${chatName}" (${chatIdToAdd}) добавлен.`);
-    await checkBotChats(bot);
-    return;
-  }
-
   if (message.text?.startsWith('/')) {
     return;
   }
@@ -423,7 +283,7 @@ bot.on('message', safeHandler(async (ctx) => {
       if (!ACTIVE_CHATS.includes(chatId)) ACTIVE_CHATS.push(chatId);
       if (!ALLOWED_CHATS.some(chat => chat.id === chatId)) {
         try {
-          await ctx.reply('🚫 Этот чат не разрешён для работы бота.\nЕсли хотите, чтобы бот снова работал здесь, обратитесь к <a href="https://t.me/red_star_development">Красной звезде</a>.', { parse_mode: 'HTML', disable_web_page_preview: true });
+          await ctx.reply('🚫 Этот бот работает только для канала @spektrminda.', { parse_mode: 'HTML', disable_web_page_preview: true });
         } catch (e) {}
         try { await new Promise(r => setTimeout(r, 1500)); } catch {}
         try { await ctx.leaveChat(); } catch (e) {}
@@ -493,7 +353,7 @@ bot.on('message', safeHandler(async (ctx) => {
   }
 
   if (isAdmin(ctx) && isPrivate(ctx) && message.text && message.text.startsWith('https://t.me/c/')) {
-    const match = message.text.match(/https:\/\/t\.me\/c\/(\d+)\/(\d+)/);
+    const match = message.text.match(/https:\/\/t\.me\/c\/(\d+)\/(\d+)(?:\s+Р)?/);
     if (!match) {
       await ctx.reply('❌ Неверный формат ссылки.');
       return;
@@ -501,46 +361,55 @@ bot.on('message', safeHandler(async (ctx) => {
     const shortChat = match[1];
     const msgId = parseInt(match[2], 10);
     const targetChatId = parseInt('-100' + shortChat, 10);
-    REPLY_LINKS[userId] = { chatId: targetChatId, messageId: msgId };
-    await ctx.reply('✅ Ссылка принята. Следующее отправленное вами сообщение будет переслано как ответ.');
+    const isMainChat = targetChatId === -1002894920473;
+    const hasRFlag = message.text.includes('Р');
+    
+    REPLY_LINKS[userId] = { 
+      chatId: targetChatId, 
+      messageId: msgId,
+      reply: !(isMainChat && hasRFlag)
+    };
+    
+    await ctx.reply('✅ Ссылка принята. Следующее отправленное вами сообщение будет переслано' + 
+                   (isMainChat && hasRFlag ? ' в чат без ответа.' : ' как ответ.'));
     return;
   }
 
   if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
-    const { chatId: targetChat, messageId: targetMessage } = REPLY_LINKS[userId];
+    const { chatId: targetChat, messageId: targetMessage, reply } = REPLY_LINKS[userId];
     try {
-      const replyOptions = { reply_to_message_id: targetMessage };
+      const sendOptions = reply ? { reply_to_message_id: targetMessage } : {};
       
       if (message.text) {
-        await ctx.telegram.sendMessage(targetChat, message.text, { ...replyOptions, disable_web_page_preview: true });
+        await ctx.telegram.sendMessage(targetChat, message.text, { ...sendOptions, disable_web_page_preview: true });
       } else if (message.photo) {
         const fileId = message.photo[message.photo.length - 1].file_id;
-        await ctx.telegram.sendPhoto(targetChat, fileId, { ...replyOptions, caption: message.caption || '' });
+        await ctx.telegram.sendPhoto(targetChat, fileId, { ...sendOptions, caption: message.caption || '' });
       } else if (message.video) {
-        await ctx.telegram.sendVideo(targetChat, message.video.file_id, { ...replyOptions, caption: message.caption || '' });
+        await ctx.telegram.sendVideo(targetChat, message.video.file_id, { ...sendOptions, caption: message.caption || '' });
       } else if (message.document) {
-        await ctx.telegram.sendDocument(targetChat, message.document.file_id, { ...replyOptions, caption: message.caption || '' });
+        await ctx.telegram.sendDocument(targetChat, message.document.file_id, { ...sendOptions, caption: message.caption || '' });
       } else if (message.sticker) {
-        await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, replyOptions);
+        await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, sendOptions);
       } else if (message.animation) {
-        await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { ...replyOptions, caption: message.caption || '' });
+        await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { ...sendOptions, caption: message.caption || '' });
       } else if (message.audio) {
         await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
-          ...replyOptions, 
+          ...sendOptions, 
           caption: message.caption || '' 
         });
       } else if (message.voice) {
         await ctx.telegram.sendVoice(targetChat, message.voice.file_id, { 
-          ...replyOptions, 
+          ...sendOptions, 
           caption: message.caption || '' 
         });
       } else if (message.video_note) {
-        await ctx.telegram.sendVideoNote(targetChat, message.video_note.file_id, replyOptions);
+        await ctx.telegram.sendVideoNote(targetChat, message.video_note.file_id, sendOptions);
       } else if (message.poll) {
         const p = message.poll;
         const options = p.options.map(o => o.text);
         await ctx.telegram.sendPoll(targetChat, p.question, options, { 
-          ...replyOptions,
+          ...sendOptions,
           is_anonymous: p.is_anonymous, 
           type: p.type
         });
@@ -578,7 +447,12 @@ bot.on('message', safeHandler(async (ctx) => {
     return;
   }
 
-  if (chatId === CHAT_ID && 
+  const isAllowedChat = ALLOWED_CHATS.some(chat => 
+    chat.id === chatId && 
+    (chat.id === -1002899007927 || chat.id === -1002894920473)
+  );
+
+  if (isAllowedChat && 
       message.forward_from_chat && 
       message.forward_from_chat.id === CHANNEL_ID && 
       message.forward_from_message_id &&
@@ -586,14 +460,14 @@ bot.on('message', safeHandler(async (ctx) => {
       !message.text?.startsWith('/')) {
     
     try {
-      const sentMessage = await ctx.telegram.sendMessage(CHAT_ID, COMMENT_TEXT, {
+      const sentMessage = await ctx.telegram.sendMessage(chatId, COMMENT_TEXT, {
         reply_to_message_id: message.message_id,
         parse_mode: 'HTML',
         disable_web_page_preview: true
       });
 
       const postLink = `https://t.me/${message.forward_from_chat.username}/${message.forward_from_message_id}`;
-      const commentLink = `https://t.me/c/${String(CHAT_ID).slice(4)}/${sentMessage.message_id}`;
+      const commentLink = `https://t.me/c/${String(chatId).slice(4)}/${sentMessage.message_id}`;
 
       await ctx.telegram.sendMessage(
         ADMIN_CHAT_ID, 
@@ -617,11 +491,7 @@ bot.on('message', safeHandler(async (ctx) => {
 setInterval(() => checkBotChats(bot), 5 * 60 * 1000);
 
 setTimeout(() => {
-  loadAllowedChats().then(() => {
-    console.log('Инициализация завершена');
-  }).catch(error => {
-    console.error('Ошибка при инициализации:', error);
-  });
+  console.log('Инициализация завершена');
 }, 3000);
 
 module.exports = async (req, res) => {
