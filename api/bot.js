@@ -61,9 +61,10 @@ async function loadAllowedChats() {
         }
       }
       ALLOWED_CHATS = chats;
+      console.log(`✅ Загружено ${ALLOWED_CHATS.length} разрешённых чатов из сообщения`);
     }
   } catch (error) {
-    console.error('Ошибка при загрузке чатов:', error);
+    console.error('❌ Ошибка при загрузке чатов:', error);
   }
 }
 
@@ -80,8 +81,9 @@ async function updateAllowedChatsMessage() {
       null, 
       text
     );
+    console.log('✅ Сообщение с чатами обновлено');
   } catch (error) {
-    console.error('Ошибка при обновлении сообщения с чатами:', error);
+    console.error('❌ Ошибка при обновлении сообщения с чатами:', error);
   }
 }
 
@@ -98,8 +100,9 @@ async function updateRedStarChannelPost() {
       null, 
       text
     );
+    console.log('✅ Пост в канале "Красная звезда" обновлён');
   } catch (error) {
-    console.error('Ошибка при обновлении поста в канале:', error);
+    console.error('❌ Ошибка при обновлении поста в канале:', error);
   }
 }
 
@@ -500,40 +503,40 @@ bot.on('message', safeHandler(async (ctx) => {
   if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
     const { chatId: targetChat, messageId: targetMessage } = REPLY_LINKS[userId];
     try {
+      const replyOptions = { reply_to_message_id: targetMessage };
+      
       if (message.text) {
-        await ctx.telegram.sendMessage(targetChat, message.text, { reply_to_message_id: targetMessage, disable_web_page_preview: true });
+        await ctx.telegram.sendMessage(targetChat, message.text, { ...replyOptions, disable_web_page_preview: true });
       } else if (message.photo) {
         const fileId = message.photo[message.photo.length - 1].file_id;
-        await ctx.telegram.sendPhoto(targetChat, fileId, { caption: message.caption || '', reply_to_message_id: targetMessage });
+        await ctx.telegram.sendPhoto(targetChat, fileId, { ...replyOptions, caption: message.caption || '' });
       } else if (message.video) {
-        await ctx.telegram.sendVideo(targetChat, message.video.file_id, { caption: message.caption || '', reply_to_message_id: targetMessage });
+        await ctx.telegram.sendVideo(targetChat, message.video.file_id, { ...replyOptions, caption: message.caption || '' });
       } else if (message.document) {
-        await ctx.telegram.sendDocument(targetChat, message.document.file_id, { caption: message.caption || '', reply_to_message_id: targetMessage });
+        await ctx.telegram.sendDocument(targetChat, message.document.file_id, { ...replyOptions, caption: message.caption || '' });
       } else if (message.sticker) {
-        await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, { reply_to_message_id: targetMessage });
+        await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, replyOptions);
       } else if (message.animation) {
-        await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { caption: message.caption || '', reply_to_message_id: targetMessage });
+        await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { ...replyOptions, caption: message.caption || '' });
       } else if (message.audio) {
         await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
-          caption: message.caption || '', 
-          reply_to_message_id: targetMessage 
+          ...replyOptions, 
+          caption: message.caption || '' 
         });
       } else if (message.voice) {
         await ctx.telegram.sendVoice(targetChat, message.voice.file_id, { 
-          caption: message.caption || '', 
-          reply_to_message_id: targetMessage 
+          ...replyOptions, 
+          caption: message.caption || '' 
         });
       } else if (message.video_note) {
-        await ctx.telegram.sendVideoNote(targetChat, message.video_note.file_id, { 
-          reply_to_message_id: targetMessage 
-        });
+        await ctx.telegram.sendVideoNote(targetChat, message.video_note.file_id, replyOptions);
       } else if (message.poll) {
         const p = message.poll;
         const options = p.options.map(o => o.text);
         await ctx.telegram.sendPoll(targetChat, p.question, options, { 
+          ...replyOptions,
           is_anonymous: p.is_anonymous, 
-          type: p.type,
-          reply_to_message_id: targetMessage
+          type: p.type
         });
       }
       
