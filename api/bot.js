@@ -1,7 +1,10 @@
 const { Telegraf } = require('telegraf');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-if (!BOT_TOKEN) console.error('❌ BOT_TOKEN не установлен!');
+if (!BOT_TOKEN) {
+  console.error('❌ BOT_TOKEN не установлен!');
+  process.exit(1);
+}
 
 const CHANNEL_USERNAME = 'spektrminda';
 const CHANNEL_ID = -1002696885166;
@@ -31,6 +34,16 @@ let REPLY_LINKS = {};
 const processedPosts = new Set();
 const userFirstMessages = new Set();
 
+async function isBotAdmin(chatId) {
+  try {
+    const chatMember = await bot.telegram.getChatMember(chatId, bot.botInfo.id);
+    return ['administrator', 'creator'].includes(chatMember.status);
+  } catch (error) {
+    console.error('Ошибка при проверке прав бота:', error);
+    return false;
+  }
+}
+
 function safeHandler(handler) {
   return async (ctx) => {
     try {
@@ -38,8 +51,12 @@ function safeHandler(handler) {
     } catch (err) {
       console.error('Ошибка в обработчике:', err);
       try { 
-        await ctx.reply('❌ Произошла ошибка при обработке запроса. Попробуйте позже.'); 
-      } catch (e) {}
+        if (ctx && ctx.reply) {
+          await ctx.reply('❌ Произошла ошибка при обработке запроса. Попробуйте позже.'); 
+        }
+      } catch (e) {
+        console.error('Не удалось отправить сообщение об ошибке:', e);
+      }
     }
   };
 }
@@ -65,17 +82,21 @@ function restrictedCommand(handler, { adminOnly = false } = {}) {
     if (!isPrivate(ctx) && !isAdmin(ctx)) {
       try {
         await ctx.reply('❌ Эту команду можно использовать только в ЛС.', { 
-          reply_to_message_id: ctx.message.message_id 
+          reply_to_message_id: ctx.message?.message_id 
         });
-      } catch (e) {}
+      } catch (e) {
+        console.error('Не удалось отправить сообщение о ограничении:', e);
+      }
       return;
     }
     if (adminOnly && !isAdmin(ctx)) {
       try {
         await ctx.reply('❌ Только админам.', { 
-          reply_to_message_id: ctx.message.message_id 
+          reply_to_message_id: ctx.message?.message_id 
         });
-      } catch (e) {}
+      } catch (e) {
+        console.error('Не удалось отправить сообщение о правах админа:', e);
+      }
       return;
     }
     await handler(ctx);
@@ -96,8 +117,13 @@ async function checkBotChats(botInstance) {
       }
       
       try {
-        await botInstance.telegram.leaveChat(chatId);
-        console.log(`Бот вышел из чата ${chatId}`);
+        const isAdmin = await isBotAdmin(chatId);
+        if (isAdmin) {
+          await botInstance.telegram.leaveChat(chatId);
+          console.log(`Бот вышел из чата ${chatId}`);
+        } else {
+          console.log(`Бот не является администратором в чате ${chatId}, не может выйти самостоятельно`);
+        }
       } catch (e) {
         console.error(`Не удалось выйти из чата ${chatId}:`, e);
       }
@@ -125,8 +151,13 @@ bot.on('chat_member', async (ctx) => {
         }
         
         try {
-          await ctx.telegram.leaveChat(chat.id);
-          console.log(`Бот вышел из чата ${chat.id}`);
+          const isAdmin = await isBotAdmin(chat.id);
+          if (isAdmin) {
+            await ctx.telegram.leaveChat(chat.id);
+            console.log(`Бот вышел из чата ${chat.id}`);
+          } else {
+            console.log(`Бот не является администратором в чате ${chat.id}, не может выйти самостоятельно`);
+          }
         } catch (err) {
           console.error('Ошибка при выходе из группы:', err);
         }
@@ -138,6 +169,15 @@ bot.on('chat_member', async (ctx) => {
     }
   } catch (err) {
     console.error('Ошибка в обработчике chat_member:', err);
+  }
+});
+
+bot.on('callback_query', async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+    console.log('Callback query получен, но не обработан:', ctx.update.callback_query);
+  } catch (error) {
+    console.error('Ошибка при обработке callback query:', error);
   }
 });
 
@@ -233,7 +273,7 @@ bot.command('adm', safeHandler(async (ctx) => {
   if (!isPrivate(ctx) && !isAdmin(ctx)) {
     try {
       await ctx.reply('❌ Эту команду можно использовать только в ЛС.', { 
-        reply_to_message_id: ctx.message.message_id 
+        reply_to_message_id: ctx.message?.message_id 
       });
     } catch (e) {}
     return;
@@ -284,7 +324,7 @@ bot.command('appeal', safeHandler(async (ctx) => {
   if (!isPrivate(ctx) && !isAdmin(ctx)) {
     try {
       await ctx.reply('❌ Эту команду можно использовать только в ЛС.', { 
-        reply_to_message_id: ctx.message.message_id 
+        reply_to_message_id: ctx.message?.message_id 
       });
     } catch (e) {}
     return;
@@ -332,7 +372,9 @@ bot.on('message', safeHandler(async (ctx) => {
   }
 
   if (message.new_chat_members) {
-    const isBotAdded = message.new_chat_members.some(m => m.is_bot && m.id === ctx.botInfo.id);
+    const botId = ctx.botInfo?.id || (await ctx.telegram.getMe()).id;
+    const isBotAdded = message.new_chat_members.some(m => m.is_bot && m.id === botId);
+    
     if (isBotAdded) {
       if (!ACTIVE_CHATS.includes(chatId)) ACTIVE_CHATS.push(chatId);
       
@@ -351,8 +393,13 @@ bot.on('message', safeHandler(async (ctx) => {
         } catch {}
         
         try { 
-          await ctx.leaveChat(); 
-          console.log(`Бот вышел из чата ${chatId}`);
+          const isAdmin = await isBotAdmin(chatId);
+          if (isAdmin) {
+            await ctx.leaveChat(); 
+            console.log(`Бот вышел из чата ${chatId}`);
+          } else {
+            console.log(`Бот не является администратором в чате ${chatId}, не может выйти самостоятельно`);
+          }
         } catch (e) {
           console.error(`Не удалось выйти из чата ${chatId}:`, e);
         }
@@ -440,19 +487,24 @@ bot.on('message', safeHandler(async (ctx) => {
       });
     } catch (err) {
       console.error('Ошибка при отправке ответа пользователю:', err);
-      await ctx.reply('❌ Не удалось отправить ответ.', { 
-        reply_to_message_id: message.message_id 
-      });
+      if (err.description && err.description.includes('Forbidden')) {
+        await ctx.reply('❌ Не удалось отправить ответ: пользователь заблокировал бота.', { 
+          reply_to_message_id: message.message_id 
+        });
+      } else {
+        await ctx.reply('❌ Не удалось отправить ответ.', { 
+          reply_to_message_id: message.message_id 
+        });
+      }
     }
     return;
   }
 
   if (isAdmin(ctx) && isPrivate(ctx) && message.text && message.text.startsWith('https://t.me/c/')) {
-    const parts = message.text.split(' ');
-    const link = parts[0];
-    const hasRFlag = parts.length > 1 && parts[1].toUpperCase() === 'Р';
+    const hasRFlag = /р$/i.test(message.text.trim());
+    const cleanText = message.text.replace(/р$/i, '').trim();
     
-    const match = link.match(/https:\/\/t\.me\/c\/(\d+)\/(\d+)/);
+    const match = cleanText.match(/https:\/\/t\.me\/c\/(\d+)\/(\d+)/);
     if (!match) {
       await ctx.reply('❌ Неверный формат ссылки.');
       return;
@@ -533,7 +585,13 @@ bot.on('message', safeHandler(async (ctx) => {
       delete REPLY_LINKS[userId];
     } catch (err) {
       console.error('Ошибка при пересылке по ссылке:', err);
-      await ctx.reply(`❌ Ошибка при пересылке: ${err?.description || err?.message || 'Неизвестная ошибка'}`);
+      if (err.description && err.description.includes('Forbidden')) {
+        await ctx.reply('❌ Не удалось отправить сообщение: бот не имеет доступа к чату или был заблокирован.');
+      } else if (err.description && err.description.includes('chat not found')) {
+        await ctx.reply('❌ Не удалось отправить сообщение: чат не найден.');
+      } else {
+        await ctx.reply(`❌ Ошибка при пересылке: ${err?.description || err?.message || 'Неизвестная ошибка'}`);
+      }
     }
     return;
   }
@@ -558,8 +616,27 @@ bot.on('message', safeHandler(async (ctx) => {
     } catch (err) {
       console.error('Ошибка при пересылке сообщения админам:', err);
       try {
-        await ctx.reply('❌ Не удалось отправить ваше сообщение администраторам. Попробуйте позже.');
-      } catch (e) {}
+        await ctx.telegram.sendMessage(
+          ADMIN_CHAT_ID, 
+          `📩 Новое сообщение из ЛС (не удалось переслать)\n👤 Имя: ${userName}\n🔖 Username: ${userUsername}\n🆔 ID: ${userId}\n⏰ Время: ${time}`,
+          { parse_mode: 'HTML', disable_web_page_preview: true }
+        );
+        
+        if (message.text) {
+          await ctx.telegram.sendMessage(
+            ADMIN_CHAT_ID,
+            `📝 Текст сообщения: ${message.text}`,
+            { parse_mode: 'HTML', disable_web_page_preview: true }
+          );
+        }
+        
+        if (!userFirstMessages.has(userId)) {
+          await ctx.reply(`Спасибо, ${userName}!\nВаше сообщение получено. Мы свяжемся с вами в ближайшее время.`);
+          userFirstMessages.add(userId);
+        }
+      } catch (e) {
+        console.error('Не удалось отправить уведомление админам:', e);
+      }
     }
     return;
   }
