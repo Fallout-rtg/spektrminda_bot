@@ -62,6 +62,8 @@ async function loadAllowedChats() {
       }
       ALLOWED_CHATS = chats;
       console.log(`✅ Загружено ${ALLOWED_CHATS.length} разрешённых чатов из сообщения`);
+      
+      await updateRedStarChannelPost();
     }
   } catch (error) {
     console.error('❌ Ошибка при загрузке чатов:', error);
@@ -71,9 +73,13 @@ async function loadAllowedChats() {
 async function updateAllowedChatsMessage() {
   try {
     let text = '📝 Разрешённые чаты:\n';
-    ALLOWED_CHATS.forEach(chat => {
-      text += `• ${chat.name}\nID: ${chat.id}\n`;
-    });
+    if (ALLOWED_CHATS.length === 0) {
+      text += 'Список пуст. Используйте /ida чтобы добавить чат.';
+    } else {
+      ALLOWED_CHATS.forEach(chat => {
+        text += `• ${chat.name}\nID: ${chat.id}\n`;
+      });
+    }
     
     await bot.telegram.editMessageText(
       ADMIN_CHAT_ID, 
@@ -164,7 +170,7 @@ bot.on('chat_member', async (ctx) => {
       try {
         await ctx.telegram.sendMessage(
           chat.id,
-          '🚫 Этот чат не разрешён для работы бота.\nЕсли хотите, чтобы бот снова работал здесь, обратитесь к <a href="https://t.me/red_star_development">Красной звезде</a>.',
+          '🚫 Этот чат не разрешён для работы бота.\nЕсли хотите, чтобы бот снова работал здесь, обратитесь к <a href="https://t.me/red_star_development">Красной звезе</a>.',
           { parse_mode: 'HTML', disable_web_page_preview: true }
         );
         await ctx.telegram.leaveChat(chat.id);
@@ -197,7 +203,7 @@ bot.start(restrictedCommand(async (ctx) => {
 
 💬 Здесь можно:
 — обжаловать бан или другое наказание,
-— предложить идее,
+— предложить идею,
 — задать вопрос администрации.
 
 🕓 Обычно отвечаем в течение 1–2 дней.<a href="https://static-sg.winudf.com/wupload/xy/aprojectadmin/FxsBnVvw.jpg">​</a>`;
@@ -234,7 +240,7 @@ bot.help(restrictedCommand(async (ctx) => {
 
 /start — запустить бота
 /help — показать это сообщение
-/info — информация о боте
+/info — информации о боте
 /adm — анкета на вступление в Совет Элит
 /appeal — анкета для обжалования наказания`;
     await ctx.reply(userHelpText, { parse_mode: 'HTML', disable_web_page_preview: true });
@@ -257,7 +263,6 @@ bot.command('reload_chats', restrictedCommand(async (ctx) => {
   try {
     await ctx.reply('🔄 Перезагружаю список чатов...');
     await loadAllowedChats();
-    await updateRedStarChannelPost();
     await ctx.reply(`✅ Готово! Загружено ${ALLOWED_CHATS.length} чатов.`);
   } catch (error) {
     console.error('Ошибка при перезагрузке чатов:', error);
@@ -379,7 +384,7 @@ bot.command('appeal', safeHandler(async (ctx) => {
 <em>(честно)</em>
 
 🔴 <b>Важно:</b>
-— Сообщения без анкета <b>не рассматриваются.</b>
+— Сообщения без анкеты <b>не рассматриваются.</b>
 — Жалобы с матами и угрозами — <b>игнорируются.</b>
 — Повторная подача возможна <b>через 3 дня.</b>
 
