@@ -109,7 +109,7 @@ async function checkBotChats(botInstance) {
       try {
         await botInstance.telegram.sendMessage(
           chatId,
-          '🚫 Этот бот работает только для канала @spektrminda.',
+          '🚫 Этот чат не разрешён для работы бота.',
           { parse_mode: 'HTML', disable_web_page_preview: true }
         );
       } catch (e) {
@@ -143,7 +143,7 @@ bot.on('chat_member', async (ctx) => {
         try {
           await ctx.telegram.sendMessage(
             chat.id,
-            '🚫 Этот бот работает только для канала @spektrminda.',
+            '🚫 Этот чат не разрешён для работы бота.',
             { parse_mode: 'HTML', disable_web_page_preview: true }
           );
         } catch (e) {
@@ -156,14 +156,10 @@ bot.on('chat_member', async (ctx) => {
             await ctx.telegram.leaveChat(chat.id);
             console.log(`Бот вышел из чата ${chat.id}`);
           } else {
-            console.log(`Бот не является администратором в чате ${chat.id}, не может выйти самостоятельно`);
+            console.log(`Бot не может выйти из чата ${chat.id} самостоятельно`);
           }
         } catch (err) {
           console.error('Ошибка при выходе из группы:', err);
-        }
-      } else {
-        if (!ACTIVE_CHATS.includes(chat.id)) {
-          ACTIVE_CHATS.push(chat.id);
         }
       }
     }
@@ -175,7 +171,6 @@ bot.on('chat_member', async (ctx) => {
 bot.on('callback_query', async (ctx) => {
   try {
     await ctx.answerCbQuery();
-    console.log('Callback query получен, но не обработан:', ctx.update.callback_query);
   } catch (error) {
     console.error('Ошибка при обработке callback query:', error);
   }
@@ -380,7 +375,7 @@ bot.on('message', safeHandler(async (ctx) => {
       
       if (!ALLOWED_CHATS.some(chat => chat.id === chatId)) {
         try {
-          await ctx.reply('🚫 Этот бот работает только для канала @spektrminda.', { 
+          await ctx.reply('🚫 Этот чат не разрешён для работы бота.', { 
             parse_mode: 'HTML', 
             disable_web_page_preview: true 
           });
@@ -501,10 +496,7 @@ bot.on('message', safeHandler(async (ctx) => {
   }
 
   if (isAdmin(ctx) && isPrivate(ctx) && message.text && message.text.startsWith('https://t.me/c/')) {
-    const hasRFlag = /р$/i.test(message.text.trim());
-    const cleanText = message.text.replace(/р$/i, '').trim();
-    
-    const match = cleanText.match(/https:\/\/t\.me\/c\/(\d+)\/(\d+)/);
+    const match = message.text.match(/https:\/\/t\.me\/c\/(\d+)\/(\d+)/);
     if (!match) {
       await ctx.reply('❌ Неверный формат ссылки.');
       return;
@@ -513,16 +505,14 @@ bot.on('message', safeHandler(async (ctx) => {
     const shortChat = match[1];
     const msgId = parseInt(match[2], 10);
     const targetChatId = parseInt('-100' + shortChat, 10);
-    const isMainChat = targetChatId === -1002894920473;
     
     REPLY_LINKS[userId] = { 
       chatId: targetChatId, 
       messageId: msgId,
-      shouldReply: !(isMainChat && hasRFlag)
+      shouldReply: true
     };
     
-    await ctx.reply('✅ Ссылка принята. Следующее отправленное вами сообщение будет переслано' + 
-                   (isMainChat && hasRFlag ? ' в чат без ответа.' : ' как ответ.'));
+    await ctx.reply('✅ Ссылка принята. Следующее отправленное вами сообщение будет переслано как ответ.');
     return;
   }
 
