@@ -353,21 +353,25 @@ bot.on('message', safeHandler(async (ctx) => {
   }
 
   if (isAdmin(ctx) && isPrivate(ctx) && message.text && message.text.startsWith('https://t.me/c/')) {
-    const match = message.text.match(/https:\/\/t\.me\/c\/(\d+)\/(\d+)(?:\s+Р)?/);
+    const parts = message.text.split(' ');
+    const link = parts[0];
+    const hasRFlag = parts.length > 1 && parts[1].toUpperCase() === 'Р';
+    
+    const match = link.match(/https:\/\/t\.me\/c\/(\d+)\/(\d+)/);
     if (!match) {
       await ctx.reply('❌ Неверный формат ссылки.');
       return;
     }
+    
     const shortChat = match[1];
     const msgId = parseInt(match[2], 10);
     const targetChatId = parseInt('-100' + shortChat, 10);
     const isMainChat = targetChatId === -1002894920473;
-    const hasRFlag = message.text.includes('Р');
     
     REPLY_LINKS[userId] = { 
       chatId: targetChatId, 
       messageId: msgId,
-      reply: !(isMainChat && hasRFlag)
+      shouldReply: !(isMainChat && hasRFlag)
     };
     
     await ctx.reply('✅ Ссылка принята. Следующее отправленное вами сообщение будет переслано' + 
@@ -376,9 +380,9 @@ bot.on('message', safeHandler(async (ctx) => {
   }
 
   if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
-    const { chatId: targetChat, messageId: targetMessage, reply } = REPLY_LINKS[userId];
+    const { chatId: targetChat, messageId: targetMessage, shouldReply } = REPLY_LINKS[userId];
     try {
-      const sendOptions = reply ? { reply_to_message_id: targetMessage } : {};
+      const sendOptions = shouldReply ? { reply_to_message_id: targetMessage } : {};
       
       if (message.text) {
         await ctx.telegram.sendMessage(targetChat, message.text, { ...sendOptions, disable_web_page_preview: true });
