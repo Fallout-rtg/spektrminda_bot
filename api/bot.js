@@ -9,14 +9,17 @@ if (!BOT_TOKEN) {
 const CHANNEL_USERNAME = 'spektrminda';
 const CHANNEL_ID = -1002696885166;
 const ADMIN_CHAT_ID = -1002818324656;
+const MAIN_CHAT_ID = -1002894920473;
+const COMMENTS_CHAT_ID = -1002899007927;
 const ADMIN_IDS = [1465194766, 2032240231, 1319314897];
 
 const ALLOWED_CHATS = [
-  { id: -1002899007927, name: 'Комментарии канала Я Спектр ♦️' },
-  { id: -1002818324656, name: 'Чат администрации 🏛️' },
-  { id: -1002894920473, name: 'Основной чат 🧨' }
+  { id: COMMENTS_CHAT_ID, name: 'Комментарии канала Я Спектр ♦️' },
+  { id: ADMIN_CHAT_ID, name: 'Чат администрации 🏛️' },
+  { id: MAIN_CHAT_ID, name: 'Основной чат 🧨' }
 ];
 
+const STICKER_PACK_NAME = 'ShizaSpectre';
 const COMMENT_TEXT = `<b>⚠️ Краткие правила комментариев:</b>
 
 • Спам категорически запрещён.
@@ -31,9 +34,16 @@ const bot = new Telegraf(BOT_TOKEN);
 
 let ACTIVE_CHATS = [];
 let REPLY_LINKS = {};
+let DANGER_MODE = false;
+let DANGER_MESSAGE = null;
 const processedPosts = new Set();
 const userFirstMessages = new Set();
 const spamIntervals = new Map();
+const userWarnings = new Map();
+const stickerCache = {
+  stickers: [],
+  lastUpdated: 0
+};
 
 const badWordsRhymes = {
   "хуй": "Хуй на мнения не делишь.",
@@ -72,6 +82,38 @@ async function isBotAdmin(chatId) {
   } catch (error) {
     console.error('Ошибка при проверке прав бота:', error);
     return false;
+  }
+}
+
+async function updateStickerCache() {
+  try {
+    const stickerSet = await bot.telegram.getStickerSet(STICKER_PACK_NAME);
+    stickerCache.stickers = stickerSet.stickers;
+    stickerCache.lastUpdated = Date.now();
+    console.log(`Обновлен кэш стикеров: ${stickerCache.stickers.length} стикеров`);
+  } catch (error) {
+    console.error('Ошибка при загрузке стикерпака:', error);
+  }
+}
+
+async function sendRandomSticker(ctx) {
+  if (stickerCache.stickers.length === 0 || Date.now() - stickerCache.lastUpdated > 3600000) {
+    await updateStickerCache();
+  }
+
+  if (stickerCache.stickers.length === 0) {
+    await ctx.reply('❌ Не удалось загрузить стикеры');
+    return;
+  }
+
+  const randomIndex = Math.floor(Math.random() * stickerCache.stickers.length);
+  const randomSticker = stickerCache.stickers[randomIndex];
+  
+  try {
+    await ctx.sendSticker(randomSticker.file_id);
+  } catch (error) {
+    console.error('Ошибка при отправке стикера:', error);
+    await ctx.reply('❌ Не удалось отправить стикер');
   }
 }
 
@@ -155,10 +197,11 @@ async function checkBotChats(botInstance) {
         } else {
           console.log(`Бот не является администратором в чате ${chatId}, не может выйти самостоятельно`);
         }
-        ACTIVE_CHATS = ACTIVE_CHATS.filter(id => id !== chatId);
       } catch (e) {
         console.error(`Не удалось выйти из чата ${chatId}:`, e);
       }
+      
+      ACTIVE_CHATS = ACTIVE_CHATS.filter(id => id !== chatId);
     }
   }
 }
@@ -198,6 +241,73 @@ bot.on('chat_member', async (ctx) => {
   }
 });
 
+bot.on('new_chat_members', safeHandler(async (ctx) => {
+  if (ctx.chat.id !== COMMENTS_CHAT_ID) return;
+  
+  for (const newMember of ctx.message.new_chat_members) {
+    if (newMember.is_bot) continue;
+
+    const warningMessage = await ctx.reply(
+      `👋 Привет, ${newMember.first_name || 'пользователь'}!\n\n` +
+      `⚠️ Этот чат предназначен только для комментариев к постам канала. ` +
+      `Пожалуйста, покиньте чат в течение 5 минут, иначе вы будете исключены.\n\n` +
+      `Если останетесь, мы будем вынуждены принять меры.`,
+      { parse_mode: 'HTML' }
+    );
+    
+    userWarnings.set(newMember.id, {
+      chatId: ctx.chat.id,
+      warningMessageId: warningMessage.message_id,
+      joinTime: Date.now()
+    });
+    
+    setTimeout(async () => {
+      try {
+        const chatMember = await ctx.telegram.getChatMember(ctx.chat.id, newMember.id);
+        
+        if (['member', 'administrator', 'creator'].includes(chatMember.status)) {
+          await ctx.telegram.banChatMember(ctx.chat.id, newMember.id, undefined, {
+            revoke_messages: false
+          });
+          
+          await ctx.reply(
+            `❌ Пользователь ${newMember.first_name || 'без имени'} был исключен за нарушение правил чата.`,
+            { reply_to_message_id: warningMessage.message_id }
+          );
+        }
+      } catch (error) {
+        console.error('Ошибка при исключении пользователя:', error);
+      } finally {
+        userWarnings.delete(newMember.id);
+      }
+    }, 5 * 60 * 1000);
+  }
+}));
+
+bot.on('left_chat_member', safeHandler(async (ctx) => {
+  if (ctx.chat.id !== COMMENTS_CHAT_ID) return;
+  
+  const leftMember = ctx.message.left_chat_member;
+  
+  if (userWarnings.has(leftMember.id)) {
+    const warningInfo = userWarnings.get(leftMember.id);
+    
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        warningInfo.warningMessageId,
+        null,
+        `✅ Пользователь ${leftMember.first_name || 'без имени'} покинул чат добровольно. Спасибо за понимание!`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (error) {
+      console.error('Ошибка при редактировании сообщения:', error);
+    }
+    
+    userWarnings.delete(leftMember.id);
+  }
+}));
+
 bot.on('callback_query', async (ctx) => {
   try {
     const data = ctx.callbackQuery.data;
@@ -225,54 +335,23 @@ bot.catch((err, ctx) => {
   console.error('Global error', err, ctx?.update?.update_id);
 });
 
+bot.command('shiza', restrictedCommand(async (ctx) => {
+  await sendRandomSticker(ctx);
+}));
+
 bot.command('danger', restrictedCommand(async (ctx) => {
   if (ctx.from.id !== 2032240231) {
     await ctx.reply('❌ Эта команда только для Советчика.');
     return;
   }
 
-  const messageText = ctx.message.text.split(' ').slice(1).join(' ');
-  if (!messageText) {
-    await ctx.reply('❌ Укажите сообщение для отправки. Пример: /danger Ваше сообщение');
-    return;
-  }
-
-  const spamId = Date.now().toString();
-  let lastMessageId = null;
-
-  const stopButton = Markup.inlineKeyboard([
-    Markup.button.callback('СТОП', `stop_spam_${spamId}`)
-  ]);
-
-  const spamInterval = setInterval(async () => {
-    try {
-      if (lastMessageId) {
-        try {
-          await bot.telegram.deleteMessage(1465194766, lastMessageId);
-        } catch (error) {
-          console.error('Ошибка при удалении сообщения:', error);
-        }
-      }
-
-      const sentMessage = await bot.telegram.sendMessage(
-        1465194766,
-        `${messageText}\n\n`,
-        {
-          parse_mode: 'HTML',
-          ...stopButton
-        }
-      );
-
-      lastMessageId = sentMessage.message_id;
-    } catch (error) {
-      console.error('Ошибка при отправке сообщения:', error);
-    }
-  }, 5000);
-
-  spamIntervals.set(spamId, spamInterval);
-
-  await ctx.reply(`✅ Спам запущен с ID: ${spamId}. Для остановки нажмите кнопку СТОП в сообщении.`);
+  DANGER_MODE = true;
+  await ctx.reply('✅ Режим опасности активирован. Отправьте сообщение для спама.');
 }, { adminOnly: true }));
+
+bot.command('stickerme', restrictedCommand(async (ctx) => {
+  await sendRandomSticker(ctx);
+}));
 
 bot.start(restrictedCommand(async (ctx) => {
   const user = ctx.message.from;
@@ -317,10 +396,12 @@ bot.help(restrictedCommand(async (ctx) => {
 /adm — анкета на вступление в Совет Элит
 /appeal — анкета для обжалования наказания
 /danger — отправка повторяющихся сообщений (только для Советчика)
+/shiza — отправить случайный стикер из пака Шизы
+/stickerme — отправить случайный стикер
 
 <b>Как отвечать</b>:
 💡 В ЛС: пересланное сообщение от пользователя -> ответьте на него — бот пересылает ответ пользователю.
-💡 В чатах: отправьте ссылку на сообщение формата <code>https://t.me/c/&lt;chat_short_id&gt;/&lt;message_id&gt;</code>. Бот подтвердит принятие ссылки. Следующее отправленное вами сообщение (текст/фото/стикер/файл/видео/опрос) будет переслано как ответ на указанный пост.`;
+💡 В чатах: отправьте ссылку на сообщение формата <code>https://t.me/c/&lt;chat_short_id&gt;/&lt;message_id&gt;</code> или <code>https://t.me/spectrmind/1/&lt;message_id&gt;</code>. Бот подтвердит принятие ссылки. Следующее отправленное вами сообщение (текст/фото/стикер/файл/видео/опрос) будет переслано как ответ на указанный пост.`;
     await ctx.reply(adminHelpText, { parse_mode: 'HTML', disable_web_page_preview: true });
   } else {
     const userHelpText = `ℹ️ Команды пользователя:
@@ -329,7 +410,9 @@ bot.help(restrictedCommand(async (ctx) => {
 /help — показать это сообщение
 /info — информации о боте
 /adm — анкета на вступление в Совет Элит
-/appeal — анкета для обжалования наказания`;
+/appeal — анкета для обжалования наказания
+/shiza — отправить случайный стикер из пака Шизы
+/stickerme — отправить случайный стикер`;
     await ctx.reply(userHelpText, { parse_mode: 'HTML', disable_web_page_preview: true });
   }
 }));
@@ -458,6 +541,47 @@ bot.on('message', safeHandler(async (ctx) => {
   const chatId = message.chat.id;
   const text = message.text || '';
 
+  if (DANGER_MODE && userId === 2032240231) {
+    DANGER_MODE = false;
+    DANGER_MESSAGE = text;
+
+    const spamId = Date.now().toString();
+    let lastMessageId = null;
+
+    const stopButton = Markup.inlineKeyboard([
+      Markup.button.callback('СТОП', `stop_spam_${spamId}`)
+    ]);
+
+    const spamInterval = setInterval(async () => {
+      try {
+        if (lastMessageId) {
+          try {
+            await bot.telegram.deleteMessage(1465194766, lastMessageId);
+          } catch (error) {
+            console.error('Ошибка при удалении сообщения:', error);
+          }
+        }
+
+        const sentMessage = await bot.telegram.sendMessage(
+          1465194766,
+          `${DANGER_MESSAGE}\n\n`,
+          {
+            parse_mode: 'HTML',
+            ...stopButton
+          }
+        );
+
+        lastMessageId = sentMessage.message_id;
+      } catch (error) {
+        console.error('Ошибка при отправке сообщения:', error);
+      }
+    }, 5000);
+
+    spamIntervals.set(spamId, spamInterval);
+    await ctx.reply(`✅ Спам запущен с ID: ${spamId}. Для остановки нажмите кнопку СТОП в сообщении.`);
+    return;
+  }
+
   if (userId === 1319314897 && isPrivate(ctx) && text.includes('Железяка, быстро мне анкету нарисовал блять')) {
     const userName = ctx.from.first_name || ctx.from.username || '';
     const currentTime = new Date().toLocaleString('ru-RU', { 
@@ -467,7 +591,7 @@ bot.on('message', safeHandler(async (ctx) => {
       second: '2-digit' 
     });
     
-    const admText = `<b>📜 Анкета кандидата в администрацию</b>
+    const admText = `<b>📜 Анкета кандидата в администрации</b>
 
 💬 Привет, ${userName}! Заполни эту анкету, если хочешь стать администратором. Отвечай честно — оцениваем не только опыт, но и личные качества.
 
@@ -642,25 +766,27 @@ bot.on('message', safeHandler(async (ctx) => {
     return;
   }
 
-  if (isAdmin(ctx) && isPrivate(ctx) && message.text && message.text.startsWith('https://t.me/c/')) {
-    const match = message.text.match(/https:\/\/t\.me\/c\/(\d+)\/(\d+)/);
-    if (!match) {
-      await ctx.reply('❌ Неверный формат ссылки.');
+  if (isAdmin(ctx) && isPrivate(ctx) && message.text) {
+    const linkMatch = message.text.match(/https:\/\/t\.me\/(c\/|spectrmind\/1\/)(\d+)/);
+    if (linkMatch) {
+      const messageId = parseInt(linkMatch[2], 10);
+      let targetChatId = null;
+      
+      if (linkMatch[1].startsWith('c/')) {
+        targetChatId = parseInt('-100' + messageId, 10);
+      } else {
+        targetChatId = MAIN_CHAT_ID;
+      }
+      
+      REPLY_LINKS[userId] = { 
+        chatId: targetChatId, 
+        messageId: messageId,
+        shouldReply: true
+      };
+      
+      await ctx.reply('✅ Ссылка принята. Следующее отправленное вами сообщение будет переслано как ответ.');
       return;
     }
-    
-    const shortChat = match[1];
-    const msgId = parseInt(match[2], 10);
-    const targetChatId = parseInt('-100' + shortChat, 10);
-    
-    REPLY_LINKS[userId] = { 
-      chatId: targetChatId, 
-      messageId: msgId,
-      shouldReply: true
-    };
-    
-    await ctx.reply('✅ Ссылка принята. Следующее отправленное вами сообщение будет переслано как ответ.');
-    return;
   }
 
   if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
@@ -780,7 +906,7 @@ bot.on('message', safeHandler(async (ctx) => {
 
   const isAllowedChat = ALLOWED_CHATS.some(chat => 
     chat.id === chatId && 
-    (chat.id === -1002899007927 || chat.id === -1002894920473)
+    (chat.id === COMMENTS_CHAT_ID || chat.id === MAIN_CHAT_ID)
   );
 
   if (isAllowedChat && 
@@ -797,8 +923,15 @@ bot.on('message', safeHandler(async (ctx) => {
         disable_web_page_preview: true
       });
 
-      const postLink = `https://t.me/${message.forward_from_chat.username}/${message.forward_from_message_id}`;
-      const commentLink = `https://t.me/c/${String(chatId).slice(4)}/${sentMessage.message_id}`;
+      let postLink, commentLink;
+      
+      if (chatId === COMMENTS_CHAT_ID) {
+        postLink = `https://t.me/${message.forward_from_chat.username}/${message.forward_from_message_id}`;
+        commentLink = `https://t.me/c/${Math.abs(chatId).toString().slice(4)}/${sentMessage.message_id}`;
+      } else {
+        postLink = `https://t.me/${CHANNEL_USERNAME}/${message.forward_from_message_id}`;
+        commentLink = `https://t.me/${CHANNEL_USERNAME}/1/${sentMessage.message_id}`;
+      }
 
       await ctx.telegram.sendMessage(
         ADMIN_CHAT_ID, 
@@ -822,9 +955,11 @@ bot.on('message', safeHandler(async (ctx) => {
 }));
 
 setInterval(() => checkBotChats(bot), 5 * 60 * 1000);
+setInterval(updateStickerCache, 60 * 60 * 1000);
 
 setTimeout(() => {
   console.log('Инициализация завершена');
+  updateStickerCache();
 }, 3000);
 
 module.exports = async (req, res) => {
