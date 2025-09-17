@@ -98,7 +98,6 @@ async function updateStickerCache() {
     const stickerSet = await bot.telegram.getStickerSet(STICKER_PACK_NAME);
     stickerSetCache.stickers = stickerSet.stickers;
     stickerSetCache.lastUpdated = Date.now();
-    console.log(`Обновлен кэш стикеров: ${stickerSetCache.stickers.length} стикеров`);
   } catch (error) {
     console.error('Ошибка при обновлении кэша стикеров:', error);
   }
