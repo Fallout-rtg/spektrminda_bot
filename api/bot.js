@@ -228,8 +228,18 @@ bot.on('chat_member', async (ctx) => {
     if (newMember.user.id === ctx.botInfo.id && chat.type !== 'private') {
       if (!ALLOWED_CHATS.some(chatObj => chatObj.id === chat.id)) {
         try {
-          await ctx.telegram.leaveChat(chat.id);
-          console.log(`Бот вышел из неразрешенного чата ${chat.id}`);
+          const isAdmin = await isBotAdmin(chat.id);
+          if (isAdmin) {
+            await ctx.telegram.leaveChat(chat.id);
+            console.log(`Бот вышел из неразрешенного чата ${chat.id}`);
+          } else {
+            console.log(`Бот не является администратором в чате ${chat.id}, не может выйти самостоятельно`);
+            await ctx.telegram.sendMessage(
+              chat.id,
+              '🚫 Этот чат не разрешён для работы бота.\n\n📢 Подписывайтесь на наш канал: https://t.me/red_star_development',
+              { parse_mode: 'HTML', disable_web_page_preview: true }
+            );
+          }
         } catch (err) {
           console.error(`Не удалось выйти из чата ${chat.id}:`, err);
           try {
@@ -523,7 +533,7 @@ bot.help(restrictedCommand(async (ctx) => {
 
 /start — запуск бота
 /help — показать это сообщение
-/info — информация о боте
+/info — информации о боте
 /test — проверка работоспособности
 /allowed_chats — показать список разрешённых чатов
 /comment_text — показать текст комментариев под постами
@@ -736,6 +746,10 @@ bot.on('message', safeHandler(async (ctx) => {
       }
 
       try {
+        if (!DANGER_TARGET) {
+          throw new Error('chat_id is empty');
+        }
+
         await bot.telegram.sendMessage(
           DANGER_TARGET,
           DANGER_MESSAGE,
@@ -754,7 +768,7 @@ bot.on('message', safeHandler(async (ctx) => {
       } catch (error) {
         console.error('Ошибка при отправке спама:', error);
         
-        if (error.description && error.description.includes('bot was blocked by the user')) {
+        if (error.description && (error.description.includes('bot was blocked by the user') || error.description.includes('chat_id is empty'))) {
           clearInterval(spamInterval);
           spamIntervals.delete(spamId);
           activeSpamsByTarget.delete(DANGER_TARGET);
@@ -762,7 +776,7 @@ bot.on('message', safeHandler(async (ctx) => {
             ctx.chat.id,
             sentMessage.message_id,
             null,
-            `❌ Спам остановлен. Бот заблокирован пользователем ${DANGER_TARGET}.`,
+            `❌ Спам остановлен. Бот заблокирован пользователем ${DANGER_TARGET} или chat_id пустой.`,
             { reply_markup: { inline_keyboard: [] } }
           );
           if (targetMessageId) {
@@ -1003,60 +1017,60 @@ bot.on('message', safeHandler(async (ctx) => {
     }
   }
 
-  if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
-    const { chatId: targetChat, messageId: targetMessage, shouldReply } = REPLY_LINKS[userId];
-    try {
-      const sendOptions = shouldReply ? { reply_to_message_id: targetMessage } : {};
-      
-      if (message.text) {
-        await ctx.telegram.sendMessage(targetChat, message.text, { 
-          ...sendOptions, 
-          disable_web_page_preview: true 
-        });
-      } else if (message.photo) {
-        const fileId = message.photo[message.photo.length - 1].file_id;
-        await ctx.telegram.sendPhoto(targetChat, fileId, { 
-          ...sendOptions, 
-          caption: message.caption || '' 
-        });
-      } else if (message.video) {
-        await ctx.telegram.sendVideo(targetChat, message.video.file_id, { 
-          ...sendOptions, 
-          caption: message.caption || '' 
-        });
-      } else if (message.document) {
-        await ctx.telegram.sendDocument(targetChat, message.document.file_id, { 
-          ...sendOptions, 
-          caption: message.caption || '' 
-        });
-      } else if (message.sticker) {
-        await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, sendOptions);
-      } else if (message.animation) {
-        await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { 
-          ...sendOptions, 
-          caption: message.caption || '' 
-        });
-      } else if (message.audio) {
-        await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
-          ...sendOptions, 
-          caption: message.caption || '' 
-        });
-      } else if (message.voice) {
-        await ctx.telegram.sendVoice(targetChat, message.voice.file_id, { 
-          ...sendOptions, 
-          caption: message.caption || '' 
-        });
-      } else if (message.video_note) {
-        await ctx.telegram.sendVideoNote(targetChat, message.video_note.file_id, sendOptions);
-      } else if (message.poll) {
-        const p = message.poll;
-        const options = p.options.map(o => o.text);
-        await ctx.telegram.sendPoll(targetChat, p.question, options, { 
-          ...sendOptions,
-          is_anonymous: p.is_anonymous, 
-          type: p.type
-        });
-      }
+if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
+  const { chatId: targetChat, messageId: targetMessage, shouldReply } = REPLY_LINKS[userId];
+  try {
+    const sendOptions = shouldReply ? { reply_to_message_id: targetMessage } : {};
+    
+    if (message.text) {
+      await ctx.telegram.sendMessage(targetChat, message.text, { 
+        ...sendOptions, 
+        disable_web_page_preview: true 
+      });
+    } else if (message.photo) {
+      const fileId = message.photo[message.photo.length - 1].file_id;
+      await ctx.telegram.sendPhoto(targetChat, fileId, { 
+        ...sendOptions, 
+        caption: message.caption || '' 
+      });
+    } else if (message.video) {
+      await ctx.telegram.sendVideo(targetChat, message.video.file_id, { 
+        ...sendOptions, 
+        caption: message.caption || '' 
+      });
+    } else if (message.document) {
+      await ctx.telegram.sendDocument(targetChat, message.document.file_id, { 
+        ...sendOptions, 
+        caption: message.caption || '' 
+      });
+    } else if (message.sticker) {
+      await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, sendOptions);
+    } else if (message.animation) {
+      await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { 
+        ...sendOptions, 
+        caption: message.caption || '' 
+      });
+    } else if (message.audio) {
+      await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
+        ...sendOptions, 
+        caption: message.caption || '' 
+      });
+    } else if (message.voice) {
+      await ctx.telegram.sendVoice(targetChat, message.voice.file_id, { 
+        ...sendOptions, 
+        caption: message.caption || '' 
+      });
+    } else if (message.video_note) {
+      await ctx.telegram.sendVideoNote(targetChat, message.video_note.file_id, sendOptions);
+    } else if (message.poll) {
+      const p = message.poll;
+      const options = p.options.map(o => o.text);
+      await ctx.telegram.sendPoll(targetChat, p.question, options, { 
+        ...sendOptions,
+        is_anonymous: p.is_anonymous, 
+        type: p.type
+      });
+    }
       
       await ctx.reply('✅ Сообщение успешно отправлено.');
       delete REPLY_LINKS[userId];
