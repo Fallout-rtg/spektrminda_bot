@@ -13,6 +13,12 @@ const MAIN_CHAT_ID = -1002894920473;
 const COMMENTS_CHAT_ID = -1002899007927;
 const ADMIN_IDS = [1465194766, 2032240231, 1319314897];
 
+const ADMIN_TARGETS = {
+  SPECTRE: 1465194766,
+  ADVISOR: 2032240231,
+  COMMISSAR: 1319314897
+};
+
 const ALLOWED_CHATS = [
   { id: COMMENTS_CHAT_ID, name: 'Комментарии канала Я Спектр ♦️' },
   { id: ADMIN_CHAT_ID, name: 'Чат администрации 🏛️' },
@@ -35,6 +41,7 @@ const bot = new Telegraf(BOT_TOKEN);
 let ACTIVE_CHATS = [];
 let REPLY_LINKS = {};
 let DANGER_MODE = false;
+let DANGER_TARGET = null;
 let DANGER_MESSAGE = null;
 const processedPosts = new Set();
 const userFirstMessages = new Set();
@@ -114,6 +121,24 @@ async function sendRandomSticker(ctx) {
   } catch (error) {
     console.error('Ошибка при отправке стикера:', error);
     await ctx.reply('❌ Не удалось отправить стикер');
+  }
+}
+
+async function sendRandomStickerToChat(chatId) {
+  if (Math.random() < 0.02) {
+    try {
+      if (stickerCache.stickers.length === 0 || Date.now() - stickerCache.lastUpdated > 3600000) {
+        await updateStickerCache();
+      }
+
+      if (stickerCache.stickers.length > 0) {
+        const randomIndex = Math.floor(Math.random() * stickerCache.stickers.length);
+        const randomSticker = stickerCache.stickers[randomIndex];
+        await bot.telegram.sendSticker(chatId, randomSticker.file_id);
+      }
+    } catch (error) {
+      console.error('Ошибка при отправке случайного стикера:', error);
+    }
   }
 }
 
@@ -325,6 +350,25 @@ bot.on('callback_query', async (ctx) => {
       }
     }
     
+    if (data.startsWith('danger_')) {
+      if (ctx.from.id !== 2032240231) {
+        await ctx.answerCbQuery('❌ Только Советчик может использовать эту команду.');
+        return;
+      }
+
+      const targetMap = {
+        'danger_spectre': ADMIN_TARGETS.SPECTRE,
+        'danger_advisor': ADMIN_TARGETS.ADVISOR,
+        'danger_commissar': ADMIN_TARGETS.COMMISSAR
+      };
+
+      DANGER_TARGET = targetMap[data];
+      DANGER_MODE = true;
+
+      await ctx.editMessageText('✅ Режим опасности активирован. Отправьте сообщение для спама.');
+      await ctx.answerCbQuery();
+    }
+    
     await ctx.answerCbQuery();
   } catch (error) {
     console.error('Ошибка при обработке callback query:', error);
@@ -345,13 +389,14 @@ bot.command('danger', restrictedCommand(async (ctx) => {
     return;
   }
 
-  DANGER_MODE = true;
-  await ctx.reply('✅ Режим опасности активирован. Отправьте сообщение для спама.');
-}, { adminOnly: true }));
+  const buttons = Markup.inlineKeyboard([
+    [Markup.button.callback('Спектр ♦️', 'danger_spectre')],
+    [Markup.button.callback('Советчик 📜', 'danger_advisor')],
+    [Markup.button.callback('Устричный Комиссар 🏛️', 'danger_commissar')]
+  ]);
 
-bot.command('stickerme', restrictedCommand(async (ctx) => {
-  await sendRandomSticker(ctx);
-}));
+  await ctx.reply('✅ Режим опасности активирован. Выберите админа для спама:', buttons);
+}, { adminOnly: true }));
 
 bot.start(restrictedCommand(async (ctx) => {
   const user = ctx.message.from;
@@ -397,7 +442,6 @@ bot.help(restrictedCommand(async (ctx) => {
 /appeal — анкета для обжалования наказания
 /danger — отправка повторяющихся сообщений (только для Советчика)
 /shiza — отправить случайный стикер из пака Шизы
-/stickerme — отправить случайный стикер
 
 <b>Как отвечать</b>:
 💡 В ЛС: пересланное сообщение от пользователя -> ответьте на него — бот пересылает ответ пользователю.
@@ -411,8 +455,7 @@ bot.help(restrictedCommand(async (ctx) => {
 /info — информации о боте
 /adm — анкета на вступление в Совет Элит
 /appeal — анкета для обжалования наказания
-/shiza — отправить случайный стикер из пака Шизы
-/stickerme — отправить случайный стикер`;
+/shiza — отправить случайный стикер из пака Шизы`;
     await ctx.reply(userHelpText, { parse_mode: 'HTML', disable_web_page_preview: true });
   }
 }));
@@ -541,7 +584,11 @@ bot.on('message', safeHandler(async (ctx) => {
   const chatId = message.chat.id;
   const text = message.text || '';
 
-  if (DANGER_MODE && userId === 2032240231) {
+  if (ALLOWED_CHATS.some(chat => chat.id === chatId) && !message.text?.startsWith('/')) {
+    await sendRandomStickerToChat(chatId);
+  }
+
+  if (DANGER_MODE && userId === 2032240231 && DANGER_TARGET) {
     DANGER_MODE = false;
     DANGER_MESSAGE = text;
 
@@ -549,21 +596,21 @@ bot.on('message', safeHandler(async (ctx) => {
     let lastMessageId = null;
 
     const stopButton = Markup.inlineKeyboard([
-      Markup.button.callback('СТОП', `stop_spam_${spamId}`)
+      [Markup.button.callback('СТОП', `stop_spam_${spamId}`)]
     ]);
 
     const spamInterval = setInterval(async () => {
       try {
         if (lastMessageId) {
           try {
-            await bot.telegram.deleteMessage(1465194766, lastMessageId);
+            await bot.telegram.deleteMessage(DANGER_TARGET, lastMessageId);
           } catch (error) {
             console.error('Ошибка при удалении сообщения:', error);
           }
         }
 
         const sentMessage = await bot.telegram.sendMessage(
-          1465194766,
+          DANGER_TARGET,
           `${DANGER_MESSAGE}\n\n`,
           {
             parse_mode: 'HTML',
@@ -578,7 +625,8 @@ bot.on('message', safeHandler(async (ctx) => {
     }, 5000);
 
     spamIntervals.set(spamId, spamInterval);
-    await ctx.reply(`✅ Спам запущен с ID: ${spamId}. Для остановки нажмите кнопку СТОП в сообщении.`);
+    await ctx.reply(`✅ Спам запущен для админа ${DANGER_TARGET} с ID: ${spamId}. Для остановки нажмите кнопку СТОП в сообщении.`);
+    DANGER_TARGET = null;
     return;
   }
 
