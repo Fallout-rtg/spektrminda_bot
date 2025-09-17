@@ -329,10 +329,19 @@ bot.on('callback_query', async (ctx) => {
       const spamId = data.replace('stop_spam_', '');
       
       if (spamIntervals.has(spamId)) {
-        clearInterval(spamIntervals.get(spamId));
+        const spamInfo = spamIntervals.get(spamId);
+        clearInterval(spamInfo.interval);
         spamIntervals.delete(spamId);
+        
+        await ctx.telegram.editMessageText(
+          spamInfo.chatId,
+          spamInfo.messageId,
+          null,
+          '✅ Спам остановлен вручную.',
+          { reply_markup: { inline_keyboard: [] } }
+        );
+        
         await ctx.answerCbQuery('Спам остановлен');
-        await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
       } else {
         await ctx.answerCbQuery('Спам уже остановлен');
       }
@@ -585,41 +594,73 @@ bot.on('message', safeHandler(async (ctx) => {
     DANGER_MESSAGE = text;
 
     const spamId = Date.now().toString();
-    let lastMessageId = null;
+    let messageCount = 0;
+    const MAX_MESSAGES = 50;
 
     const stopButton = Markup.inlineKeyboard([
-      [Markup.button.callback('СТОП', `stop_spam_${spamId}`)]
+      [Markup.button.callback('🛑 ОСТАНОВИТЬ СПАМ', `stop_spam_${spamId}`)]
     ]);
 
+    const sentMessage = await ctx.reply(
+      `🔴 Спам запущен для админа ${DANGER_TARGET}\nОтправлено сообщений: ${messageCount}/${MAX_MESSAGES}\n\nДля остановки нажмите кнопку ниже:`,
+      stopButton
+    );
+
     const spamInterval = setInterval(async () => {
-      try {
-        if (lastMessageId) {
-          try {
-            await bot.telegram.deleteMessage(DANGER_TARGET, lastMessageId);
-          } catch (error) {
-            console.error('Ошибка при удалении сообщения:', error);
-          }
-        }
-
-        const sentMessage = await bot.telegram.sendMessage(
-          DANGER_TARGET,
-          DANGER_MESSAGE,
-          {
-            parse_mode: 'HTML',
-            ...stopButton
-          }
-        );
-
-        lastMessageId = sentMessage.message_id;
-      } catch (error) {
-        console.error('Ошибка при отправке сообщения:', error);
+      if (messageCount >= MAX_MESSAGES) {
         clearInterval(spamInterval);
         spamIntervals.delete(spamId);
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          sentMessage.message_id,
+          null,
+          `✅ Спам завершен. Достигнут лимит в ${MAX_MESSAGES} сообщений.`,
+          { reply_markup: { inline_keyboard: [] } }
+        );
+        return;
       }
-    }, 5000);
 
-    spamIntervals.set(spamId, spamInterval);
-    await ctx.reply(`✅ Спам запущен для админа ${DANGER_TARGET} с ID: ${spamId}. Для остановки нажмите кнопку СТОП в сообщении.`);
+      try {
+        await bot.telegram.sendMessage(
+          DANGER_TARGET,
+          DANGER_MESSAGE,
+          { parse_mode: 'HTML' }
+        );
+        
+        messageCount++;
+        
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          sentMessage.message_id,
+          null,
+          `🔴 Спам запущен для админа ${DANGER_TARGET}\nОтправлено сообщений: ${messageCount}/${MAX_MESSAGES}\n\nДля остановки нажмите кнопку ниже:`,
+          stopButton
+        );
+      } catch (error) {
+        console.error('Ошибка при отправке спама:', error);
+        
+        if (error.description && error.description.includes('bot was blocked by the user')) {
+          clearInterval(spamInterval);
+          spamIntervals.delete(spamId);
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            sentMessage.message_id,
+            null,
+            `❌ Спам остановлен. Бот заблокирован пользователем ${DANGER_TARGET}.`,
+            { reply_markup: { inline_keyboard: [] } }
+          );
+        } else {
+          console.error('Ошибка при спаме, но продолжаем:', error);
+        }
+      }
+    }, 3000);
+
+    spamIntervals.set(spamId, {
+      interval: spamInterval,
+      messageId: sentMessage.message_id,
+      chatId: ctx.chat.id
+    });
+    
     DANGER_TARGET = null;
     return;
   }
