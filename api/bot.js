@@ -1,4 +1,3 @@
-```javascript
 const { Telegraf, Markup } = require('telegraf');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -1018,4 +1017,3 @@ module.exports = async (req, res) => {
     if (!res.headersSent) res.status(500).send('Internal Server Error');
   }
 };
-```
