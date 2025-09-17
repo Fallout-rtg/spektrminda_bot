@@ -47,6 +47,7 @@ const processedPosts = new Set();
 const userFirstMessages = new Set();
 const spamIntervals = new Map();
 const userWarnings = new Map();
+const activeSpamsByTarget = new Map();
 const stickerCache = {
   stickers: [],
   lastUpdated: 0
@@ -227,25 +228,19 @@ bot.on('chat_member', async (ctx) => {
     if (newMember.user.id === ctx.botInfo.id && chat.type !== 'private') {
       if (!ALLOWED_CHATS.some(chatObj => chatObj.id === chat.id)) {
         try {
-          await ctx.telegram.sendMessage(
-            chat.id,
-            '🚫 Этот чат не разрешён для работы бота.\n\n📢 Подписывайтесь на наш канал: https://t.me/red_star_development',
-            { parse_mode: 'HTML', disable_web_page_preview: true }
-          );
-        } catch (e) {
-          console.error('Не удалось отправить сообщение о выходе:', e);
-        }
-        
-        try {
-          const isAdmin = await isBotAdmin(chat.id);
-          if (isAdmin) {
-            await ctx.telegram.leaveChat(chat.id);
-            console.log(`Бот вышел из чата ${chat.id}`);
-          } else {
-            console.log(`Бot не может выйти из чата ${chat.id} самостоятельно`);
-          }
+          await ctx.telegram.leaveChat(chat.id);
+          console.log(`Бот вышел из неразрешенного чата ${chat.id}`);
         } catch (err) {
-          console.error('Ошибка при выходе из группы:', err);
+          console.error(`Не удалось выйти из чата ${chat.id}:`, err);
+          try {
+            await ctx.telegram.sendMessage(
+              chat.id,
+              '🚫 Этот чат не разрешён для работы бота.\n\n📢 Подписывайтесь на наш канал: https://t.me/red_star_development',
+              { parse_mode: 'HTML', disable_web_page_preview: true }
+            );
+          } catch (e) {
+            console.error('Не удалось отправить сообщение о выходе:', e);
+          }
         }
       }
     }
@@ -263,7 +258,7 @@ bot.on('new_chat_members', safeHandler(async (ctx) => {
     const warningMessage = await ctx.reply(
       `👋 Привет, ${newMember.first_name || 'пользователь'}!\n\n` +
       `⚠️ Этот чат предназначен только для комментариев к постам канала. ` +
-      `Пожалуйста, покиньте чат в течение 5 минут, иначе вы будете исключены.\n\n` +
+      `Пожалуйста, покиньте чат в течение 30 секунд, иначе вы будете исключены.\n\n` +
       `Если останетесь, мы будем вынуждены принять меры.`,
       { parse_mode: 'HTML' }
     );
@@ -279,21 +274,36 @@ bot.on('new_chat_members', safeHandler(async (ctx) => {
         const chatMember = await ctx.telegram.getChatMember(ctx.chat.id, newMember.id);
         
         if (['member', 'administrator', 'creator'].includes(chatMember.status)) {
+          try {
+            await ctx.telegram.deleteMessage(ctx.chat.id, warningMessage.message_id);
+          } catch (e) {
+            console.error('Не удалось удалить сообщение с предупреждением:', e);
+          }
+          
           await ctx.telegram.banChatMember(ctx.chat.id, newMember.id, undefined, {
             revoke_messages: false
           });
           
-          await ctx.reply(
+          const banMessage = await ctx.reply(
             `❌ Пользователь ${newMember.first_name || 'без имени'} был исключен за нарушение правил чата.`,
-            { reply_to_message_id: warningMessage.message_id }
+            { reply_to_message_id: ctx.message.message_id }
           );
+          
+          setTimeout(async () => {
+            try {
+              await ctx.telegram.unbanChatMember(ctx.chat.id, newMember.id);
+              console.log(`Пользователь ${newMember.id} разбанен, но не возвращен в чат`);
+            } catch (error) {
+              console.error('Ошибка при разбане пользователя:', error);
+            }
+          }, 2000);
         }
       } catch (error) {
         console.error('Ошибка при исключении пользователя:', error);
       } finally {
         userWarnings.delete(newMember.id);
       }
-    }, 5 * 60 * 1000);
+    }, 30000);
   }
 }));
 
@@ -330,8 +340,17 @@ bot.on('callback_query', async (ctx) => {
       
       if (spamIntervals.has(spamId)) {
         const spamInfo = spamIntervals.get(spamId);
+        
+        const canStop = ctx.from.id === 2032240231 || ctx.from.id === spamInfo.targetId;
+        
+        if (!canStop) {
+          await ctx.answerCbQuery('❌ Только инициатор или цель спама могут остановить его.');
+          return;
+        }
+        
         clearInterval(spamInfo.interval);
         spamIntervals.delete(spamId);
+        activeSpamsByTarget.delete(spamInfo.targetId);
         
         await ctx.telegram.editMessageText(
           spamInfo.chatId,
@@ -340,6 +359,20 @@ bot.on('callback_query', async (ctx) => {
           '✅ Спам остановлен вручную.',
           { reply_markup: { inline_keyboard: [] } }
         );
+        
+        if (spamInfo.targetMessageId) {
+          try {
+            await ctx.telegram.editMessageText(
+              spamInfo.targetId,
+              spamInfo.targetMessageId,
+              null,
+              '✅ Спам остановлен.',
+              { reply_markup: { inline_keyboard: [] } }
+            );
+          } catch (error) {
+            console.error('Не удалось отредактировать сообщение у цели:', error);
+          }
+        }
         
         await ctx.answerCbQuery('Спам остановлен');
       } else {
@@ -371,6 +404,60 @@ bot.on('callback_query', async (ctx) => {
     console.error('Ошибка при обработке callback query:', error);
   }
 });
+
+bot.command('stopspam', safeHandler(async (ctx) => {
+  if (!isPrivate(ctx)) {
+    await ctx.reply('❌ Эту команду можно использовать только в ЛС.');
+    return;
+  }
+
+  const userId = ctx.from.id;
+  const spamId = activeSpamsByTarget.get(userId);
+
+  if (!spamId) {
+    await ctx.reply('✅ На вас нет активного спама.');
+    return;
+  }
+
+  const spamInfo = spamIntervals.get(spamId);
+  if (!spamInfo) {
+    await ctx.reply('✅ Спам уже остановлен.');
+    activeSpamsByTarget.delete(userId);
+    return;
+  }
+
+  clearInterval(spamInfo.interval);
+  spamIntervals.delete(spamId);
+  activeSpamsByTarget.delete(userId);
+
+  try {
+    await ctx.telegram.editMessageText(
+      spamInfo.chatId,
+      spamInfo.messageId,
+      null,
+      '✅ Спам остановлен по команде жертвы.',
+      { reply_markup: { inline_keyboard: [] } }
+    );
+  } catch (error) {
+    console.error('Не удалось отредактировать сообщение инициатора:', error);
+  }
+
+  if (spamInfo.targetMessageId) {
+    try {
+      await ctx.telegram.editMessageText(
+        spamInfo.targetId,
+        spamInfo.targetMessageId,
+        null,
+        '✅ Спам остановлен.',
+        { reply_markup: { inline_keyboard: [] } }
+      );
+    } catch (error) {
+      console.error('Не удалось отредактировать сообщение у цели:', error);
+    }
+  }
+
+  await ctx.reply('✅ Спам остановлен.');
+}));
 
 bot.catch((err, ctx) => {
   console.error('Global error', err, ctx?.update?.update_id);
@@ -456,7 +543,8 @@ bot.help(restrictedCommand(async (ctx) => {
 /help — показать это сообщение
 /info — информации о боте
 /adm — анкета на вступление в Совет Элит
-/appeal — анкета для обжалования наказания`;
+/appeal — анкета для обжалования наказания
+/stopspam — остановить спам, если вы являетесь его целью`;
     await ctx.reply(userHelpText, { parse_mode: 'HTML', disable_web_page_preview: true });
   }
 }));
@@ -606,10 +694,24 @@ bot.on('message', safeHandler(async (ctx) => {
       stopButton
     );
 
+    let targetMessageId = null;
+    try {
+      const targetMessage = await bot.telegram.sendMessage(
+        DANGER_TARGET,
+        `🔴 Вас спамит бот. Если хотите остановить спам, нажмите кнопку ниже:`,
+        stopButton
+      );
+      targetMessageId = targetMessage.message_id;
+    } catch (error) {
+      console.error('Не удалось отправить сообщение цели:', error);
+      await ctx.reply('❌ Не удалось отправить сообщение цели. Спам может быть недоступен для остановки жертвой.');
+    }
+
     const spamInterval = setInterval(async () => {
       if (messageCount >= MAX_MESSAGES) {
         clearInterval(spamInterval);
         spamIntervals.delete(spamId);
+        activeSpamsByTarget.delete(DANGER_TARGET);
         await ctx.telegram.editMessageText(
           ctx.chat.id,
           sentMessage.message_id,
@@ -617,6 +719,19 @@ bot.on('message', safeHandler(async (ctx) => {
           `✅ Спам завершен. Достигнут лимит в ${MAX_MESSAGES} сообщений.`,
           { reply_markup: { inline_keyboard: [] } }
         );
+        if (targetMessageId) {
+          try {
+            await ctx.telegram.editMessageText(
+              DANGER_TARGET,
+              targetMessageId,
+              null,
+              '✅ Спам завершен.',
+              { reply_markup: { inline_keyboard: [] } }
+            );
+          } catch (error) {
+            console.error('Не удалось отредактировать сообщение у цели:', error);
+          }
+        }
         return;
       }
 
@@ -642,6 +757,7 @@ bot.on('message', safeHandler(async (ctx) => {
         if (error.description && error.description.includes('bot was blocked by the user')) {
           clearInterval(spamInterval);
           spamIntervals.delete(spamId);
+          activeSpamsByTarget.delete(DANGER_TARGET);
           await ctx.telegram.editMessageText(
             ctx.chat.id,
             sentMessage.message_id,
@@ -649,8 +765,19 @@ bot.on('message', safeHandler(async (ctx) => {
             `❌ Спам остановлен. Бот заблокирован пользователем ${DANGER_TARGET}.`,
             { reply_markup: { inline_keyboard: [] } }
           );
-        } else {
-          console.error('Ошибка при спаме, но продолжаем:', error);
+          if (targetMessageId) {
+            try {
+              await ctx.telegram.editMessageText(
+                DANGER_TARGET,
+                targetMessageId,
+                null,
+                '✅ Спам остановлен.',
+                { reply_markup: { inline_keyboard: [] } }
+              );
+            } catch (error) {
+              console.error('Не удалось отредактировать сообщение у цели:', error);
+            }
+          }
         }
       }
     }, 3000);
@@ -658,8 +785,12 @@ bot.on('message', safeHandler(async (ctx) => {
     spamIntervals.set(spamId, {
       interval: spamInterval,
       messageId: sentMessage.message_id,
-      chatId: ctx.chat.id
+      chatId: ctx.chat.id,
+      targetId: DANGER_TARGET,
+      targetMessageId: targetMessageId
     });
+
+    activeSpamsByTarget.set(DANGER_TARGET, spamId);
     
     DANGER_TARGET = null;
     return;
