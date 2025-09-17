@@ -1,3 +1,4 @@
+```javascript
 const { Telegraf, Markup } = require('telegraf');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -58,7 +59,7 @@ const badWordsRhymes = {
   "ебать": "Ебать — не мешки ворочать.",
   "блядь": "Блядь — не Ван Гог, а картины рисует.",
   "еблан": "Еблан — не баран, а блеет.",
-  "говно": "Говно — не облако, летать не должно.",
+  "говно": "Говно — не облака, летать не должно.",
   "долбоёб": "Долбоёб — не трактор, а пашет.",
   "мудак": "Мудак — не кактус, а колется.",
   "жопа": "Жопа — не роза, а краснеет.",
@@ -103,42 +104,30 @@ async function updateStickerCache() {
   }
 }
 
-async function sendRandomSticker(ctx) {
+async function sendRandomSticker(chatId) {
   if (stickerCache.stickers.length === 0 || Date.now() - stickerCache.lastUpdated > 3600000) {
     await updateStickerCache();
   }
 
   if (stickerCache.stickers.length === 0) {
-    await ctx.reply('❌ Не удалось загрузить стикеры');
-    return;
+    return false;
   }
 
   const randomIndex = Math.floor(Math.random() * stickerCache.stickers.length);
   const randomSticker = stickerCache.stickers[randomIndex];
   
   try {
-    await ctx.sendSticker(randomSticker.file_id);
+    await bot.telegram.sendSticker(chatId, randomSticker.file_id);
+    return true;
   } catch (error) {
     console.error('Ошибка при отправке стикера:', error);
-    await ctx.reply('❌ Не удалось отправить стикер');
+    return false;
   }
 }
 
 async function sendRandomStickerToChat(chatId) {
   if (Math.random() < 0.02) {
-    try {
-      if (stickerCache.stickers.length === 0 || Date.now() - stickerCache.lastUpdated > 3600000) {
-        await updateStickerCache();
-      }
-
-      if (stickerCache.stickers.length > 0) {
-        const randomIndex = Math.floor(Math.random() * stickerCache.stickers.length);
-        const randomSticker = stickerCache.stickers[randomIndex];
-        await bot.telegram.sendSticker(chatId, randomSticker.file_id);
-      }
-    } catch (error) {
-      console.error('Ошибка при отправке случайного стикера:', error);
-    }
+    await sendRandomSticker(chatId);
   }
 }
 
@@ -380,8 +369,13 @@ bot.catch((err, ctx) => {
 });
 
 bot.command('shiza', restrictedCommand(async (ctx) => {
-  await sendRandomSticker(ctx);
-}));
+  const success = await sendRandomSticker(MAIN_CHAT_ID);
+  if (success) {
+    await ctx.reply('✅ Стикер отправлен в основной чат');
+  } else {
+    await ctx.reply('❌ Не удалось отправить стикер');
+  }
+}, { adminOnly: true }));
 
 bot.command('danger', restrictedCommand(async (ctx) => {
   if (ctx.from.id !== 2032240231) {
@@ -441,11 +435,11 @@ bot.help(restrictedCommand(async (ctx) => {
 /adm — анкета на вступление в Совет Элит
 /appeal — анкета для обжалования наказания
 /danger — отправка повторяющихся сообщений (только для Советчика)
-/shiza — отправить случайный стикер из пака Шизы
+/shiza — отправить случайный стикер из пака Шизы в основной чат
 
 <b>Как отвечать</b>:
 💡 В ЛС: пересланное сообщение от пользователя -> ответьте на него — бот пересылает ответ пользователю.
-💡 В чатах: отправьте ссылку на сообщение формата <code>https://t.me/c/&lt;chat_short_id&gt;/&lt;message_id&gt;</code> или <code>https://t.me/spectrmind/1/&lt;message_id&gt;</code>. Бот подтвердит принятие ссылки. Следующее отправленное вами сообщение (текст/фото/стикер/файл/видео/опрос) будет переслано как ответ на указанный пост.`;
+💡 В чатах: отправьте ссылку на сообщение формата <code>https://t.me/c/&lt;chat_short_id&gt;/&lt;message_id&gt;</code> или <code>https://t.me/spectrmind/1/&lt;message_id&gt;</code>. Бot подтвердит принятие ссылки. Следующее отправленное вами сообщение (текст/фото/стикер/файл/видео/опрос) будет переслано как ответ на указанный пост.`;
     await ctx.reply(adminHelpText, { parse_mode: 'HTML', disable_web_page_preview: true });
   } else {
     const userHelpText = `ℹ️ Команды пользователя:
@@ -454,8 +448,7 @@ bot.help(restrictedCommand(async (ctx) => {
 /help — показать это сообщение
 /info — информации о боте
 /adm — анкета на вступление в Совет Элит
-/appeal — анкета для обжалования наказания
-/shiza — отправить случайный стикер из пака Шизы`;
+/appeal — анкета для обжалования наказания`;
     await ctx.reply(userHelpText, { parse_mode: 'HTML', disable_web_page_preview: true });
   }
 }));
@@ -611,7 +604,7 @@ bot.on('message', safeHandler(async (ctx) => {
 
         const sentMessage = await bot.telegram.sendMessage(
           DANGER_TARGET,
-          `${DANGER_MESSAGE}\n\n`,
+          DANGER_MESSAGE,
           {
             parse_mode: 'HTML',
             ...stopButton
@@ -621,6 +614,8 @@ bot.on('message', safeHandler(async (ctx) => {
         lastMessageId = sentMessage.message_id;
       } catch (error) {
         console.error('Ошибка при отправке сообщения:', error);
+        clearInterval(spamInterval);
+        spamIntervals.delete(spamId);
       }
     }, 5000);
 
@@ -1023,3 +1018,4 @@ module.exports = async (req, res) => {
     if (!res.headersSent) res.status(500).send('Internal Server Error');
   }
 };
+```
