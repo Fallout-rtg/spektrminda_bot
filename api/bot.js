@@ -53,6 +53,23 @@ const stickerCache = {
   lastUpdated: 0
 };
 
+function getMoscowTime() {
+  const now = new Date();
+  const moscowOffset = 3 * 60;
+  const localOffset = now.getTimezoneOffset();
+  const moscowTime = new Date(now.getTime() + (moscowOffset + localOffset) * 60000);
+  
+  return moscowTime.toLocaleString('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+}
+
 const badWordsRhymes = {
   "хуй": "Хуй на мнения не делишь.",
   "пизда": "Пизда — не бриллиант, сиять не обязана.",
@@ -251,6 +268,10 @@ bot.on('chat_member', async (ctx) => {
           } catch (e) {
             console.error('Не удалось отправить сообщение о выходе:', e);
           }
+        }
+      } else {
+        if (!ACTIVE_CHATS.includes(chat.id)) {
+          ACTIVE_CHATS.push(chat.id);
         }
       }
     }
@@ -533,7 +554,7 @@ bot.help(restrictedCommand(async (ctx) => {
 
 /start — запуск бота
 /help — показать это сообщение
-/info — информации о боте
+/info — информация о боте
 /test — проверка работоспособности
 /allowed_chats — показать список разрешённых чатов
 /comment_text — показать текст комментариев под постами
@@ -595,12 +616,7 @@ bot.command('adm', safeHandler(async (ctx) => {
   }
   
   const userName = ctx.from.first_name || ctx.from.username || '';
-  const currentTime = new Date().toLocaleString('ru-RU', { 
-    timeZone: 'Europe/Moscow', 
-    hour: '2-digit', 
-    minute: '2-digit', 
-    second: '2-digit' 
-  });
+  const currentTime = getMoscowTime();
   
   const admText = `<b>📜 Анкета кандидата в администрацию</b>
 
@@ -645,7 +661,7 @@ bot.command('appeal', safeHandler(async (ctx) => {
     return;
   }
   
-  const appealText = `<b>📄 АНКЕТА ДЛЯ ОБЖАЛОВАНИЯ НАКАЗАНИЯ</b>
+  const appealText = `<b>📄 АНКЕТА ДЛА ОБЖАЛОВАНИЯ НАКАЗАНИЯ</b>
 
 <b>1. Твой ник в Telegram:</b>
 <em>(укажи имя, под которым тебя можно найти)</em>
@@ -691,9 +707,17 @@ bot.on('message', safeHandler(async (ctx) => {
     DANGER_MODE = false;
     DANGER_MESSAGE = text;
 
+    try {
+      await ctx.telegram.getChat(DANGER_TARGET);
+    } catch (error) {
+      await ctx.reply('❌ Не удалось найти целевого пользователя. Возможно, бот заблокирован или пользователь не существует.');
+      DANGER_TARGET = null;
+      return;
+    }
+
     const spamId = Date.now().toString();
     let messageCount = 0;
-    const MAX_MESSAGES = 50;
+    const MAX_MESSAGES = 20;
 
     const stopButton = Markup.inlineKeyboard([
       [Markup.button.callback('🛑 ОСТАНОВИТЬ СПАМ', `stop_spam_${spamId}`)]
@@ -792,18 +816,81 @@ bot.on('message', safeHandler(async (ctx) => {
               console.error('Не удалось отредактировать сообщение у цели:', error);
             }
           }
+        } else if (error.description && error.description.includes('Too Many Requests')) {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            sentMessage.message_id,
+            null,
+            `⚠️ Превышены лимиты Telegram. Увеличиваю интервал отправки.`,
+            stopButton
+          );
+          clearInterval(spamInterval);
+          const newInterval = setInterval(async () => {
+            if (messageCount >= MAX_MESSAGES) {
+              clearInterval(newInterval);
+              spamIntervals.delete(spamId);
+              activeSpamsByTarget.delete(DANGER_TARGET);
+              await ctx.telegram.editMessageText(
+                ctx.chat.id,
+                sentMessage.message_id,
+                null,
+                `✅ Спам завершен. Достигнут лимит в ${MAX_MESSAGES} сообщений.`,
+                { reply_markup: { inline_keyboard: [] } }
+              );
+              if (targetMessageId) {
+                try {
+                  await ctx.telegram.editMessageText(
+                    DANGER_TARGET,
+                    targetMessageId,
+                    null,
+                    '✅ Спам завершен.',
+                    { reply_markup: { inline_keyboard: [] } }
+                  );
+                } catch (error) {
+                  console.error('Не удалось отредактировать сообщение у цели:', error);
+                }
+              }
+              return;
+            }
+
+            try {
+              await bot.telegram.sendMessage(
+                DANGER_TARGET,
+                DANGER_MESSAGE,
+                { parse_mode: 'HTML' }
+              );
+              
+              messageCount++;
+              
+              await ctx.telegram.editMessageText(
+                ctx.chat.id,
+                sentMessage.message_id,
+                null,
+                `🔴 Спам запущен для админа ${DANGER_TARGET}\nОтправлено сообщений: ${messageCount}/${MAX_MESSAGES}\n\nДля остановки нажмите кнопку ниже:`,
+                stopButton
+              );
+            } catch (err) {
+              console.error('Ошибка при отправке спама с увеличенным интервалом:', err);
+              if (err.description && err.description.includes('bot was blocked by the user')) {
+                clearInterval(newInterval);
+                spamIntervals.delete(spamId);
+                activeSpamsByTarget.delete(DANGER_TARGET);
+                await ctx.telegram.editMessageText(
+                  ctx.chat.id,
+                  sentMessage.message_id,
+                  null,
+                  `❌ Спам остановлен. Бот заблокирован пользователем ${DANGER_TARGET}.`,
+                  { reply_markup: { inline_keyboard: [] } }
+                );
+              }
+            }
+          }, 10000);
+          spamIntervals.set(spamId, newInterval);
         }
       }
-    }, 3000);
+    }, 5000);
 
-    spamIntervals.set(spamId, {
-      interval: spamInterval,
-      messageId: sentMessage.message_id,
-      chatId: ctx.chat.id,
-      targetId: DANGER_TARGET,
-      targetMessageId: targetMessageId
-    });
-
+    spamIntervals.set(spamId, spamInterval);
     activeSpamsByTarget.set(DANGER_TARGET, spamId);
     
     DANGER_TARGET = null;
@@ -812,12 +899,7 @@ bot.on('message', safeHandler(async (ctx) => {
 
   if (userId === 1319314897 && isPrivate(ctx) && text.includes('Железяка, быстро мне анкету нарисовал блять')) {
     const userName = ctx.from.first_name || ctx.from.username || '';
-    const currentTime = new Date().toLocaleString('ru-RU', { 
-      timeZone: 'Europe/Moscow', 
-      hour: '2-digit', 
-      minute: '2-digit', 
-      second: '2-digit' 
-    });
+    const currentTime = getMoscowTime();
     
     const admText = `<b>📜 Анкета кандидата в администрации</b>
 
@@ -1017,60 +1099,60 @@ bot.on('message', safeHandler(async (ctx) => {
     }
   }
 
-if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
-  const { chatId: targetChat, messageId: targetMessage, shouldReply } = REPLY_LINKS[userId];
-  try {
-    const sendOptions = shouldReply ? { reply_to_message_id: targetMessage } : {};
-    
-    if (message.text) {
-      await ctx.telegram.sendMessage(targetChat, message.text, { 
-        ...sendOptions, 
-        disable_web_page_preview: true 
-      });
-    } else if (message.photo) {
-      const fileId = message.photo[message.photo.length - 1].file_id;
-      await ctx.telegram.sendPhoto(targetChat, fileId, { 
-        ...sendOptions, 
-        caption: message.caption || '' 
-      });
-    } else if (message.video) {
-      await ctx.telegram.sendVideo(targetChat, message.video.file_id, { 
-        ...sendOptions, 
-        caption: message.caption || '' 
-      });
-    } else if (message.document) {
-      await ctx.telegram.sendDocument(targetChat, message.document.file_id, { 
-        ...sendOptions, 
-        caption: message.caption || '' 
-      });
-    } else if (message.sticker) {
-      await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, sendOptions);
-    } else if (message.animation) {
-      await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { 
-        ...sendOptions, 
-        caption: message.caption || '' 
-      });
-    } else if (message.audio) {
-      await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
-        ...sendOptions, 
-        caption: message.caption || '' 
-      });
-    } else if (message.voice) {
-      await ctx.telegram.sendVoice(targetChat, message.voice.file_id, { 
-        ...sendOptions, 
-        caption: message.caption || '' 
-      });
-    } else if (message.video_note) {
-      await ctx.telegram.sendVideoNote(targetChat, message.video_note.file_id, sendOptions);
-    } else if (message.poll) {
-      const p = message.poll;
-      const options = p.options.map(o => o.text);
-      await ctx.telegram.sendPoll(targetChat, p.question, options, { 
-        ...sendOptions,
-        is_anonymous: p.is_anonymous, 
-        type: p.type
-      });
-    }
+  if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
+    const { chatId: targetChat, messageId: targetMessage, shouldReply } = REPLY_LINKS[userId];
+    try {
+      const sendOptions = shouldReply ? { reply_to_message_id: targetMessage } : {};
+      
+      if (message.text) {
+        await ctx.telegram.sendMessage(targetChat, message.text, { 
+          ...sendOptions, 
+          disable_web_page_preview: true 
+        });
+      } else if (message.photo) {
+        const fileId = message.photo[message.photo.length - 1].file_id;
+        await ctx.telegram.sendPhoto(targetChat, fileId, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
+      } else if (message.video) {
+        await ctx.telegram.sendVideo(targetChat, message.video.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
+      } else if (message.document) {
+        await ctx.telegram.sendDocument(targetChat, message.document.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
+      } else if (message.sticker) {
+        await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, sendOptions);
+      } else if (message.animation) {
+        await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
+      } else if (message.audio) {
+        await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
+      } else if (message.voice) {
+        await ctx.telegram.sendVoice(targetChat, message.voice.file_id, { 
+          ...sendOptions, 
+          caption: message.caption || '' 
+        });
+      } else if (message.video_note) {
+        await ctx.telegram.sendVideoNote(targetChat, message.video_note.file_id, sendOptions);
+      } else if (message.poll) {
+        const p = message.poll;
+        const options = p.options.map(o => o.text);
+        await ctx.telegram.sendPoll(targetChat, p.question, options, { 
+          ...sendOptions,
+          is_anonymous: p.is_anonymous, 
+          type: p.type
+        });
+      }
       
       await ctx.reply('✅ Сообщение успешно отправлено.');
       delete REPLY_LINKS[userId];
@@ -1090,7 +1172,7 @@ if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
   if (!isAdmin(ctx) && isPrivate(ctx) && !message.text?.startsWith('/')) {
     const userName = message.from.first_name || 'Без имени';
     const userUsername = message.from.username ? '@' + message.from.username : 'нет username';
-    const time = new Date().toLocaleString('ru-RU');
+    const time = getMoscowTime();
     const caption = `📩 Новое сообщение из ЛС\n👤 Имя: ${userName}\n🔖 Username: ${userUsername}\n🆔 ID: ${userId}\n⏰ Время: ${time}`;
 
     try {
@@ -1200,6 +1282,6 @@ module.exports = async (req, res) => {
     }
   } catch (error) {
     console.error(error);
-    if (!res.headersSent) res.status(500).send('Internal Server Error');
+    res.status(200).send('OK');
   }
 };
