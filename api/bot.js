@@ -52,6 +52,7 @@ const stickerCache = {
   stickers: [],
   lastUpdated: 0
 };
+const spamMessages = new Map();
 
 function getMoscowTime() {
   const now = new Date();
@@ -93,7 +94,7 @@ const badWordsRhymes = {
   "распиздяй": "Распиздяй — не фонтан, а разбрызгивает всё вокруг.",
   "конченый": "Конченый — не фильм, хэппи-энда не будет.",
   "блин": "Блин — не оладушек, к чаю не подают.",
-  "черт": "Черт — не попугай, повторять не будет.",
+  "черt": "Черт — не попугай, повторять не будет.",
   "чёрт": "Чёрт — не попугай, повторять не будет.",
   "ёлки-палки": "Ёлки-палки — не лес, гулять там не стоит.",
   "твою же": "Твою же — не разделяют, а принимают целиком.",
@@ -245,29 +246,21 @@ bot.on('chat_member', async (ctx) => {
     if (newMember.user.id === ctx.botInfo.id && chat.type !== 'private') {
       if (!ALLOWED_CHATS.some(chatObj => chatObj.id === chat.id)) {
         try {
+          await ctx.telegram.sendMessage(
+            chat.id,
+            '🚫 Этот чат не разрешён для работы бота.\n\n📢 Подписывайтесь на наш канал: https://t.me/red_star_development',
+            { parse_mode: 'HTML', disable_web_page_preview: true }
+          );
+          
           const isAdmin = await isBotAdmin(chat.id);
           if (isAdmin) {
             await ctx.telegram.leaveChat(chat.id);
             console.log(`Бот вышел из неразрешенного чата ${chat.id}`);
           } else {
             console.log(`Бот не является администратором в чате ${chat.id}, не может выйти самостоятельно`);
-            await ctx.telegram.sendMessage(
-              chat.id,
-              '🚫 Этот чат не разрешён для работы бота.\n\n📢 Подписывайтесь на наш канал: https://t.me/red_star_development',
-              { parse_mode: 'HTML', disable_web_page_preview: true }
-            );
           }
         } catch (err) {
           console.error(`Не удалось выйти из чата ${chat.id}:`, err);
-          try {
-            await ctx.telegram.sendMessage(
-              chat.id,
-              '🚫 Этот чат не разрешён для работы бота.\n\n📢 Подписывайтесь на наш канал: https://t.me/red_star_development',
-              { parse_mode: 'HTML', disable_web_page_preview: true }
-            );
-          } catch (e) {
-            console.error('Не удалось отправить сообщение о выходе:', e);
-          }
         }
       } else {
         if (!ACTIVE_CHATS.includes(chat.id)) {
@@ -383,6 +376,16 @@ bot.on('callback_query', async (ctx) => {
         spamIntervals.delete(spamId);
         activeSpamsByTarget.delete(spamInfo.targetId);
         
+        if (spamMessages.has(spamId)) {
+          const lastMessageId = spamMessages.get(spamId);
+          try {
+            await ctx.telegram.deleteMessage(spamInfo.targetId, lastMessageId);
+          } catch (error) {
+            console.error('Не удалось удалить последнее спам-сообщение:', error);
+          }
+          spamMessages.delete(spamId);
+        }
+        
         await ctx.telegram.editMessageText(
           spamInfo.chatId,
           spamInfo.messageId,
@@ -460,6 +463,16 @@ bot.command('stopspam', safeHandler(async (ctx) => {
   clearInterval(spamInfo.interval);
   spamIntervals.delete(spamId);
   activeSpamsByTarget.delete(userId);
+
+  if (spamMessages.has(spamId)) {
+    const lastMessageId = spamMessages.get(spamId);
+    try {
+      await ctx.telegram.deleteMessage(spamInfo.targetId, lastMessageId);
+    } catch (error) {
+      console.error('Не удалось удалить последнее спам-сообщение:', error);
+    }
+    spamMessages.delete(spamId);
+  }
 
   try {
     await ctx.telegram.editMessageText(
@@ -741,11 +754,30 @@ bot.on('message', safeHandler(async (ctx) => {
       await ctx.reply('❌ Не удалось отправить сообщение цели. Спам может быть недоступен для остановки жертвой.');
     }
 
+    const spamInfo = {
+      interval: null,
+      targetId: DANGER_TARGET,
+      chatId: ctx.chat.id,
+      messageId: sentMessage.message_id,
+      targetMessageId: targetMessageId
+    };
+
     const spamInterval = setInterval(async () => {
       if (messageCount >= MAX_MESSAGES) {
         clearInterval(spamInterval);
         spamIntervals.delete(spamId);
         activeSpamsByTarget.delete(DANGER_TARGET);
+        
+        if (spamMessages.has(spamId)) {
+          const lastMessageId = spamMessages.get(spamId);
+          try {
+            await ctx.telegram.deleteMessage(DANGER_TARGET, lastMessageId);
+          } catch (error) {
+            console.error('Не удалось удалить последнее спам-сообщение:', error);
+          }
+          spamMessages.delete(spamId);
+        }
+        
         await ctx.telegram.editMessageText(
           ctx.chat.id,
           sentMessage.message_id,
@@ -774,12 +806,22 @@ bot.on('message', safeHandler(async (ctx) => {
           throw new Error('chat_id is empty');
         }
 
-        await bot.telegram.sendMessage(
+        if (spamMessages.has(spamId)) {
+          const lastMessageId = spamMessages.get(spamId);
+          try {
+            await ctx.telegram.deleteMessage(DANGER_TARGET, lastMessageId);
+          } catch (error) {
+            console.error('Не удалось удалить предыдущее спам-сообщение:', error);
+          }
+        }
+
+        const sentSpamMessage = await bot.telegram.sendMessage(
           DANGER_TARGET,
           DANGER_MESSAGE,
           { parse_mode: 'HTML' }
         );
         
+        spamMessages.set(spamId, sentSpamMessage.message_id);
         messageCount++;
         
         await ctx.telegram.editMessageText(
@@ -796,6 +838,17 @@ bot.on('message', safeHandler(async (ctx) => {
           clearInterval(spamInterval);
           spamIntervals.delete(spamId);
           activeSpamsByTarget.delete(DANGER_TARGET);
+          
+          if (spamMessages.has(spamId)) {
+            const lastMessageId = spamMessages.get(spamId);
+            try {
+              await ctx.telegram.deleteMessage(DANGER_TARGET, lastMessageId);
+            } catch (deleteError) {
+              console.error('Не удалось удалить последнее спам-сообщение:', deleteError);
+            }
+            spamMessages.delete(spamId);
+          }
+          
           await ctx.telegram.editMessageText(
             ctx.chat.id,
             sentMessage.message_id,
@@ -830,6 +883,17 @@ bot.on('message', safeHandler(async (ctx) => {
               clearInterval(newInterval);
               spamIntervals.delete(spamId);
               activeSpamsByTarget.delete(DANGER_TARGET);
+              
+              if (spamMessages.has(spamId)) {
+                const lastMessageId = spamMessages.get(spamId);
+                try {
+                  await ctx.telegram.deleteMessage(DANGER_TARGET, lastMessageId);
+                } catch (error) {
+                  console.error('Не удалось удалить последнее спам-сообщение:', error);
+                }
+                spamMessages.delete(spamId);
+              }
+              
               await ctx.telegram.editMessageText(
                 ctx.chat.id,
                 sentMessage.message_id,
@@ -854,12 +918,22 @@ bot.on('message', safeHandler(async (ctx) => {
             }
 
             try {
-              await bot.telegram.sendMessage(
+              if (spamMessages.has(spamId)) {
+                const lastMessageId = spamMessages.get(spamId);
+                try {
+                  await ctx.telegram.deleteMessage(DANGER_TARGET, lastMessageId);
+                } catch (error) {
+                  console.error('Не удалось удалить предыдущее спам-сообщение:', error);
+                }
+              }
+
+              const sentSpamMessage = await bot.telegram.sendMessage(
                 DANGER_TARGET,
                 DANGER_MESSAGE,
                 { parse_mode: 'HTML' }
               );
               
+              spamMessages.set(spamId, sentSpamMessage.message_id);
               messageCount++;
               
               await ctx.telegram.editMessageText(
@@ -875,6 +949,17 @@ bot.on('message', safeHandler(async (ctx) => {
                 clearInterval(newInterval);
                 spamIntervals.delete(spamId);
                 activeSpamsByTarget.delete(DANGER_TARGET);
+                
+                if (spamMessages.has(spamId)) {
+                  const lastMessageId = spamMessages.get(spamId);
+                  try {
+                    await ctx.telegram.deleteMessage(DANGER_TARGET, lastMessageId);
+                  } catch (deleteError) {
+                    console.error('Не удалось удалить последнее спам-сообщение:', deleteError);
+                  }
+                  spamMessages.delete(spamId);
+                }
+                
                 await ctx.telegram.editMessageText(
                   ctx.chat.id,
                   sentMessage.message_id,
@@ -885,12 +970,14 @@ bot.on('message', safeHandler(async (ctx) => {
               }
             }
           }, 10000);
-          spamIntervals.set(spamId, newInterval);
+          spamInfo.interval = newInterval;
+          spamIntervals.set(spamId, spamInfo);
         }
       }
-    }, 5000);
+    }, 1000);
 
-    spamIntervals.set(spamId, spamInterval);
+    spamInfo.interval = spamInterval;
+    spamIntervals.set(spamId, spamInfo);
     activeSpamsByTarget.set(DANGER_TARGET, spamId);
     
     DANGER_TARGET = null;
