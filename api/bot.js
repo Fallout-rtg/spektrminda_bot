@@ -1,6 +1,3 @@
-Вот исправленный код, который решает все 4 указанные проблемы:
-
-```javascript
 const { Telegraf, Markup } = require('telegraf');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
