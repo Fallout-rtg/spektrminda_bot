@@ -330,6 +330,15 @@ bot.on('callback_query', async (ctx) => {
   }
 });
 
+bot.command('shiza', restrictedCommand(async (ctx) => {
+  const success = await sendRandomSticker(MAIN_CHAT_ID);
+  if (success) {
+    await ctx.reply('✅ Стикер отправлен в основной чат');
+  } else {
+    await ctx.reply('❌ Не удалось отправить стикер');
+  }
+}, { advisorOnly: true }));
+
 bot.start(restrictedCommand(async (ctx) => {
   const user = ctx.message.from;
   const firstName = user.first_name || '';
@@ -371,7 +380,8 @@ bot.help(restrictedCommand(async (ctx) => {
 /allowed_chats — показать список разрешённых чатов
 /comment_text — показать текст комментариев под постами
 /adm — анкета на вступление в Совет Элит
-/appeal — анкета для обжалования наказания`;
+/appeal — анкета для обжалования наказания
+/shiza — отправить случайный стикер из пака Шизы в основной чат (только для Советчика)`;
 
     adminHelpText += `
 
@@ -694,9 +704,10 @@ bot.on('message', safeHandler(async (ctx) => {
       let targetChatId = null;
       
       if (linkMatch[1].startsWith('c/')) {
-        targetChatId = parseInt('-100' + messageId, 10);
+        const chatShortId = message.text.match(/c\/(\d+)/)[1];
+        targetChatId = parseInt('-100' + chatShortId, 10);
       } else {
-        targetChatId = MAIN_CHAT_ID;
+        targetChatId = COMMENTS_CHAT_ID;
       }
       
       REPLY_LINKS[userId] = { 
@@ -717,40 +728,47 @@ bot.on('message', safeHandler(async (ctx) => {
       if (message.text) {
         await ctx.telegram.sendMessage(targetChat, message.text, { 
           ...sendOptions, 
-          disable_web_page_preview: true 
+          disable_web_page_preview: true,
+          parse_mode: 'HTML'
         });
       } else if (message.photo) {
         const fileId = message.photo[message.photo.length - 1].file_id;
         await ctx.telegram.sendPhoto(targetChat, fileId, { 
           ...sendOptions, 
-          caption: message.caption || '' 
+          caption: message.caption || '',
+          parse_mode: 'HTML'
         });
       } else if (message.video) {
         await ctx.telegram.sendVideo(targetChat, message.video.file_id, { 
           ...sendOptions, 
-          caption: message.caption || '' 
+          caption: message.caption || '',
+          parse_mode: 'HTML'
         });
       } else if (message.document) {
         await ctx.telegram.sendDocument(targetChat, message.document.file_id, { 
           ...sendOptions, 
-          caption: message.caption || '' 
+          caption: message.caption || '',
+          parse_mode: 'HTML'
         });
       } else if (message.sticker) {
         await ctx.telegram.sendSticker(targetChat, message.sticker.file_id, sendOptions);
       } else if (message.animation) {
         await ctx.telegram.sendAnimation(targetChat, message.animation.file_id, { 
           ...sendOptions, 
-          caption: message.caption || '' 
+          caption: message.caption || '',
+          parse_mode: 'HTML'
         });
       } else if (message.audio) {
         await ctx.telegram.sendAudio(targetChat, message.audio.file_id, { 
           ...sendOptions, 
-          caption: message.caption || '' 
+          caption: message.caption || '',
+          parse_mode: 'HTML'
         });
       } else if (message.voice) {
         await ctx.telegram.sendVoice(targetChat, message.voice.file_id, { 
           ...sendOptions, 
-          caption: message.caption || '' 
+          caption: message.caption || '',
+          parse_mode: 'HTML'
         });
       } else if (message.video_note) {
         await ctx.telegram.sendVideoNote(targetChat, message.video_note.file_id, sendOptions);
