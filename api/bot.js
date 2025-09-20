@@ -14,12 +14,6 @@ const COMMENTS_CHAT_ID = -1002899007927;
 const ADMIN_IDS = [1465194766, 2032240231, 1319314897];
 const ADVISOR_ID = 2032240231;
 
-const ADMIN_TARGETS = {
-  SPECTRE: 1465194766,
-  ADVISOR: 2032240231,
-  COMMISSAR: 1319314897
-};
-
 const ALLOWED_CHATS = [
   { id: COMMENTS_CHAT_ID, name: 'Комментарии канала Я Спектр ♦️' },
   { id: ADMIN_CHAT_ID, name: 'Чат администрации 🏛️' },
@@ -41,19 +35,13 @@ const bot = new Telegraf(BOT_TOKEN);
 
 let ACTIVE_CHATS = [];
 let REPLY_LINKS = {};
-let DANGER_MODE = false;
-let DANGER_TARGET = null;
-let DANGER_MESSAGE = null;
 const processedPosts = new Set();
 const userFirstMessages = new Set();
-const spamIntervals = new Map();
 const userWarnings = new Map();
-const activeSpamsByTarget = new Map();
 const stickerCache = {
   stickers: [],
   lastUpdated: 0
 };
-const spamMessages = new Map();
 
 function getMoscowTime() {
   return new Date().toLocaleString('ru-RU', {
@@ -72,23 +60,14 @@ const badWordsRhymes = {
   "бaн": "Банан"
 };
 
-async function isBotAdmin(chatId) {
-  try {
-    const chatMember = await bot.telegram.getChatMember(chatId, bot.botInfo.id);
-    return ['administrator', 'creator'].includes(chatMember.status);
-  } catch (error) {
-    console.error('Ошибка при проверке прав бота:', error);
-    return false;
-  }
-}
-
 async function updateStickerCache() {
   try {
     const stickerSet = await bot.telegram.getStickerSet(STICKER_PACK_NAME);
     stickerCache.stickers = stickerSet.stickers;
     stickerCache.lastUpdated = Date.now();
-    console.log(`Обновлен кэш стикеров: ${stickerCache.stickers.length} стикеров`);
+    console.log(`✨ Обновлен кэш стикеров: ${stickerCache.stickers.length} стикеров`);
   } catch (error) {
+    console.error('❌ Ошибка при обновлении кэша стикеров:', error);
   }
 }
 
@@ -123,11 +102,13 @@ function safeHandler(handler) {
     try {
       await handler(ctx);
     } catch (err) {
+      console.error('❌ Ошибка в обработчике:', err);
       try { 
         if (ctx && ctx.reply) {
           await ctx.reply('❌ Произошла ошибка при обработке запроса. Попробуйте позже.'); 
         }
       } catch (e) {
+        console.error('❌ Не удалось отправить сообщение об ошибке:', e);
       }
     }
   };
@@ -207,20 +188,9 @@ async function checkBotChats(botInstance) {
           { parse_mode: 'HTML' }
         );
         
-        await botInstance.telegram.sendMessage(
-          ADVISOR_ID,
-          `🚫 Бот вышел из неразрешённого чата ${numericChatId}`,
-          { parse_mode: 'HTML' }
-        );
+        console.log(`✅ Бот вышел из неразрешённого чата: ${numericChatId}`);
       } catch (e) {
-        try {
-          await botInstance.telegram.sendMessage(
-            numericChatId,
-            '🚫 Этот чат не разрешён для работы бота.\n\n📢 Подписывайтесь на наш канал: https://t.me/red_star_development',
-            { parse_mode: 'HTML', disable_web_page_preview: true }
-          );
-        } catch (sendError) {
-        }
+        console.error(`❌ Ошибка при выходе из чата ${numericChatId}:`, e);
       } finally {
         ACTIVE_CHATS = ACTIVE_CHATS.filter(id => id !== chatId);
       }
@@ -238,12 +208,6 @@ bot.on('chat_member', async (ctx) => {
       
       if (!ALLOWED_CHATS.some(chatObj => chatObj.id === numericChatId)) {
         try {
-          await ctx.telegram.sendMessage(
-            chat.id,
-            '🚫 Этот чат не разрешён для работы бота.\n\n📢 Подписывайтесь на наш канал: https://t.me/red_star_development',
-            { parse_mode: 'HTML', disable_web_page_preview: true }
-          );
-          
           await ctx.telegram.leaveChat(chat.id);
           
           await ctx.telegram.sendMessage(
@@ -252,12 +216,9 @@ bot.on('chat_member', async (ctx) => {
             { parse_mode: 'HTML' }
           );
           
-          await ctx.telegram.sendMessage(
-            ADVISOR_ID,
-            `🚫 Бот вышел из неразрешённого чата ${chat.id}`,
-            { parse_mode: 'HTML' }
-          );
+          console.log(`✅ Бот вышел из неразрешённого чата: ${chat.id}`);
         } catch (err) {
+          console.error('❌ Ошибка при выходе из чата:', err);
         }
       } else {
         if (!ACTIVE_CHATS.includes(numericChatId)) {
@@ -269,15 +230,12 @@ bot.on('chat_member', async (ctx) => {
             { parse_mode: 'HTML' }
           );
           
-          await ctx.telegram.sendMessage(
-            ADVISOR_ID,
-            `✅ Бот добавлен в разрешённый чат: ${numericChatId}`,
-            { parse_mode: 'HTML' }
-          );
+          console.log(`✅ Бот добавлен в разрешённый чат: ${numericChatId}`);
         }
       }
     }
   } catch (err) {
+    console.error('❌ Ошибка в обработчике chat_member:', err);
   }
 });
 
@@ -326,6 +284,12 @@ bot.on('new_chat_members', safeHandler(async (ctx) => {
             } catch (error) {
             }
           }, 2000);
+
+          await ctx.telegram.sendMessage(
+            ADMIN_CHAT_ID,
+            `👮 Пользователь ${newMember.first_name || 'без имени'} (ID: ${newMember.id}) был исключен из чата комментариев за нарушение правил.`,
+            { parse_mode: 'HTML' }
+          );
         }
       } catch (error) {
       } finally {
@@ -360,167 +324,11 @@ bot.on('left_chat_member', safeHandler(async (ctx) => {
 
 bot.on('callback_query', async (ctx) => {
   try {
-    const data = ctx.callbackQuery.data;
-    
-    if (data.startsWith('stop_spam_')) {
-      const spamId = data.replace('stop_spam_', '');
-      
-      if (spamIntervals.has(spamId)) {
-        const spamInfo = spamIntervals.get(spamId);
-        
-        const canStop = ctx.from.id === ADVISOR_ID || ctx.from.id === spamInfo.targetId;
-        
-        if (!canStop) {
-          await ctx.answerCbQuery('❌ Только инициатор или цель спама могут остановить его.');
-          return;
-        }
-        
-        clearInterval(spamInfo.interval);
-        spamIntervals.delete(spamId);
-        activeSpamsByTarget.delete(spamInfo.targetId);
-        
-        if (spamMessages.has(spamId)) {
-          const lastMessageId = spamMessages.get(spamId);
-          try {
-            await ctx.telegram.deleteMessage(spamInfo.targetId, lastMessageId);
-          } catch (error) {
-          }
-          spamMessages.delete(spamId);
-        }
-        
-        await ctx.telegram.editMessageText(
-          spamInfo.chatId,
-          spamInfo.messageId,
-          null,
-          '✅ Спам остановлен вручную.',
-          { reply_markup: { inline_keyboard: [] } }
-        );
-        
-        if (spamInfo.targetMessageId) {
-          try {
-            await ctx.telegram.editMessageText(
-              spamInfo.targetId,
-              spamInfo.targetMessageId,
-              null,
-              '✅ Спам остановлен.',
-              { reply_markup: { inline_keyboard: [] } }
-            );
-          } catch (error) {
-          }
-        }
-        
-        await ctx.answerCbQuery('Спам остановлен');
-      } else {
-        await ctx.answerCbQuery('Спам уже остановлен');
-      }
-    }
-    
-    if (data.startsWith('danger_')) {
-      if (ctx.from.id !== ADVISOR_ID) {
-        await ctx.answerCbQuery('❌ Только Советчик может использовать эту команду.');
-        return;
-      }
-
-      const targetMap = {
-        'danger_spectre': ADMIN_TARGETS.SPECTRE,
-        'danger_advisor': ADMIN_TARGETS.ADVISOR,
-        'danger_commissar': ADMIN_TARGETS.COMMISSAR
-      };
-
-      DANGER_TARGET = targetMap[data];
-      DANGER_MODE = true;
-
-      await ctx.editMessageText('✅ Режим опасности активирован. Отправьте сообщение для спама.');
-      await ctx.answerCbQuery();
-    }
-    
     await ctx.answerCbQuery();
   } catch (error) {
+    console.error('❌ Ошибка в обработчике callback_query:', error);
   }
 });
-
-bot.command('stopspam', safeHandler(async (ctx) => {
-  if (!isPrivate(ctx)) {
-    await ctx.reply('🌸 Эту команду можно использовать только в ЛС.');
-    return;
-  }
-
-  const userId = ctx.from.id;
-  const spamId = activeSpamsByTarget.get(userId);
-
-  if (!spamId) {
-    await ctx.reply('✅ На вас нет активного спама.');
-    return;
-  }
-
-  const spamInfo = spamIntervals.get(spamId);
-  if (!spamInfo) {
-    await ctx.reply('✅ Спам уже остановлен.');
-    activeSpamsByTarget.delete(userId);
-    return;
-  }
-
-  clearInterval(spamInfo.interval);
-  spamIntervals.delete(spamId);
-  activeSpamsByTarget.delete(userId);
-
-  if (spamMessages.has(spamId)) {
-    const lastMessageId = spamMessages.get(spamId);
-    try {
-      await ctx.telegram.deleteMessage(spamInfo.targetId, lastMessageId);
-    } catch (error) {
-    }
-    spamMessages.delete(spamId);
-  }
-
-  try {
-    await ctx.telegram.editMessageText(
-      spamInfo.chatId,
-      spamInfo.messageId,
-      null,
-      '✅ Спам остановлен по команде жертвы.',
-      { reply_markup: { inline_keyboard: [] } }
-    );
-  } catch (error) {
-  }
-
-  if (spamInfo.targetMessageId) {
-    try {
-      await ctx.telegram.editMessageText(
-        spamInfo.targetId,
-        spamInfo.targetMessageId,
-        null,
-        '✅ Спам остановлен.',
-        { reply_markup: { inline_keyboard: [] } }
-      );
-    } catch (error) {
-    }
-  }
-
-  await ctx.reply('✅ Спам остановлен.');
-}));
-
-bot.catch((err, ctx) => {
-});
-
-bot.command('shiza', restrictedCommand(async (ctx) => {
-  const success = await sendRandomSticker(MAIN_CHAT_ID);
-  if (success) {
-    await ctx.reply('✅ Стикер отправлен в основной чат');
-  } else {
-    await ctx.reply('❌ Не удалось отправить стикер');
-  }
-}, { advisorOnly: true }));
-
-bot.command('danger', restrictedCommand(async (ctx) => {
-  const buttons = Markup.inlineKeyboard([
-    [Markup.button.callback('Спектр ♦️', 'danger_spectre')],
-    [Markup.button.callback('Советчик 📜', 'danger_advisor')],
-    [Markup.button.callback('Устричный Комиссар 🏛️', 'danger_commissar')]
-  ]);
-
-  await ctx.reply('✅ Режим опасности активирован. Выберите админа для спама:', buttons);
-}, { advisorOnly: true }));
 
 bot.start(restrictedCommand(async (ctx) => {
   const user = ctx.message.from;
@@ -565,12 +373,6 @@ bot.help(restrictedCommand(async (ctx) => {
 /adm — анкета на вступление в Совет Элит
 /appeal — анкета для обжалования наказания`;
 
-    if (isAdvisor(ctx)) {
-      adminHelpText += `
-/danger — отправка повторяющихся сообщений (только для Советчика)
-/shiza — отправить случайный стикер из пака Шизы в основной чат`;
-    }
-
     adminHelpText += `
 
 <b>Как отвечать</b>:
@@ -585,8 +387,7 @@ bot.help(restrictedCommand(async (ctx) => {
 /help — показать это сообщение
 /info — информации о боте
 /adm — анкета на вступление в Совет Элит
-/appeal — анкета для обжалования наказания
-/stopspam — остановить спам, если вы являетесь его целью`;
+/appeal — анкета для обжалования наказания`;
     await ctx.reply(userHelpText, { parse_mode: 'HTML', disable_web_page_preview: true });
   }
 }));
@@ -710,136 +511,6 @@ bot.on('message', safeHandler(async (ctx) => {
 
   if (ALLOWED_CHATS.some(chat => chat.id === chatId) && !message.text?.startsWith('/')) {
     await sendRandomStickerToChat(chatId);
-  }
-
-  if (DANGER_MODE && userId === ADVISOR_ID && DANGER_TARGET) {
-    DANGER_MODE = false;
-    DANGER_MESSAGE = text;
-
-    try {
-      await ctx.telegram.getChat(DANGER_TARGET);
-    } catch (error) {
-      await ctx.reply('❌ Не удалось найти целевого пользователя. Возможно, бот заблокирован или пользователь не существует.');
-      DANGER_TARGET = null;
-      return;
-    }
-
-    const spamId = Date.now().toString();
-    let messageCount = 0;
-    const MESSAGE_COUNT = 10;
-
-    const stopButton = Markup.inlineKeyboard([
-      [Markup.button.callback('🛑 ОСТАНОВИТЬ СПАМ', `stop_spam_${spamId}`)]
-    ]);
-
-    const sentMessage = await ctx.reply(
-      `🔴 Спам запущен для админа ${DANGER_TARGET}\nОтправлено сообщений: ${messageCount}/${MESSAGE_COUNT}\n\nДля остановки нажмите кнопку ниже:`,
-      stopButton
-    );
-
-    let targetMessageId = null;
-    try {
-      const targetMessage = await bot.telegram.sendMessage(
-        DANGER_TARGET,
-        `🔴 Вас спамит бот. Если хотите остановить спам, нажмите кнопку ниже:`,
-        stopButton
-      );
-      targetMessageId = targetMessage.message_id;
-    } catch (error) {
-    }
-
-    const spamInfo = {
-      interval: null,
-      targetId: DANGER_TARGET,
-      chatId: ctx.chat.id,
-      messageId: sentMessage.message_id,
-      targetMessageId: targetMessageId
-    };
-
-    const sendSpamMessage = async () => {
-      if (messageCount >= MESSAGE_COUNT) {
-        clearInterval(spamInfo.interval);
-        return finishSpam();
-      }
-
-      try {
-        const sentSpamMessage = await bot.telegram.sendMessage(
-          DANGER_TARGET,
-          DANGER_MESSAGE,
-          { parse_mode: 'HTML' }
-        );
-        
-        spamMessages.set(spamId, sentSpamMessage.message_id);
-        messageCount++;
-        
-        await ctx.telegram.editMessageText(
-          ctx.chat.id,
-          sentMessage.message_id,
-          null,
-          `🔴 Спам запущен для админа ${DANGER_TARGET}\nОтправлено сообщений: ${messageCount}/${MESSAGE_COUNT}\n\nДля остановки нажмите кнопку ниже:`,
-          stopButton
-        );
-      } catch (error) {
-        if (error.description && error.description.includes('bot was blocked by the user')) {
-          clearInterval(spamInfo.interval);
-          finishSpam(true);
-        }
-      }
-    };
-
-    const finishSpam = async (blocked = false) => {
-      spamIntervals.delete(spamId);
-      activeSpamsByTarget.delete(DANGER_TARGET);
-      
-      if (spamMessages.has(spamId)) {
-        const lastMessageId = spamMessages.get(spamId);
-        try {
-          await ctx.telegram.deleteMessage(DANGER_TARGET, lastMessageId);
-        } catch (error) {
-        }
-        spamMessages.delete(spamId);
-      }
-      
-      const endMessage = blocked ? 
-        `❌ Спам остановлен. Бот заблокирован пользователем ${DANGER_TARGET}.` :
-        `✅ Спам завершен. Отправлено ${messageCount} сообщений.`;
-      
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        sentMessage.message_id,
-        null,
-        endMessage,
-        { reply_markup: { inline_keyboard: [] } }
-      );
-      
-      if (targetMessageId) {
-        try {
-          await ctx.telegram.editMessageText(
-            DANGER_TARGET,
-            targetMessageId,
-            null,
-            '✅ Спам завершен.',
-            { reply_markup: { inline_keyboard: [] } }
-          );
-        } catch (error) {
-        }
-      }
-
-      await ctx.telegram.sendMessage(
-        ADMIN_CHAT_ID,
-        blocked ? 
-          `❌ Спам остановлен. Бот заблокирован пользователем ${DANGER_TARGET}.` :
-          `🔴 Спам завершен для админа ${DANGER_TARGET}. Отправлено ${messageCount} сообщений.`,
-        { parse_mode: 'HTML' }
-      );
-    };
-
-    spamInfo.interval = setInterval(sendSpamMessage, 1000);
-    spamIntervals.set(spamId, spamInfo);
-    activeSpamsByTarget.set(DANGER_TARGET, spamId);
-    
-    DANGER_TARGET = null;
-    return;
   }
 
   if (userId === 1319314897 && isPrivate(ctx) && text.includes('Железяка, быстро мне анкету нарисовал блять')) {
@@ -1002,12 +673,6 @@ bot.on('message', safeHandler(async (ctx) => {
         `📨 Ответ отправлен пользователю ${originalId}`,
         { parse_mode: 'HTML' }
       );
-      
-      await ctx.telegram.sendMessage(
-        ADVISOR_ID,
-        `📨 Ответ отправлен пользователю ${originalId}`,
-        { parse_mode: 'HTML' }
-      );
     } catch (err) {
       if (err.description && err.description.includes('Forbidden')) {
         await ctx.reply('❌ Не удалось отправить ответ: пользователь заблокировал бота.', { 
@@ -1036,8 +701,7 @@ bot.on('message', safeHandler(async (ctx) => {
       
       REPLY_LINKS[userId] = { 
         chatId: targetChatId, 
-        messageId: messageId,
-        shouldReply: true
+        messageId: messageId
       };
       
       await ctx.reply('✅ Ссылка принята. Следующее отправленное вами сообщение будет переслано как ответ.');
@@ -1046,9 +710,9 @@ bot.on('message', safeHandler(async (ctx) => {
   }
 
   if (isAdmin(ctx) && REPLY_LINKS[userId] && !(message.text?.startsWith('/'))) {
-    const { chatId: targetChat, messageId: targetMessage, shouldReply } = REPLY_LINKS[userId];
+    const { chatId: targetChat, messageId: targetMessage } = REPLY_LINKS[userId];
     try {
-      const sendOptions = shouldReply ? { reply_to_message_id: targetMessage } : {};
+      const sendOptions = { reply_to_message_id: targetMessage };
       
       if (message.text) {
         await ctx.telegram.sendMessage(targetChat, message.text, { 
@@ -1108,12 +772,6 @@ bot.on('message', safeHandler(async (ctx) => {
         { parse_mode: 'HTML' }
       );
       
-      await ctx.telegram.sendMessage(
-        ADVISOR_ID,
-        `📨 Сообщение отправлено в чат ${targetChat} как ответ на сообщение ${targetMessage}`,
-        { parse_mode: 'HTML' }
-      );
-      
       delete REPLY_LINKS[userId];
     } catch (err) {
       if (err.description && err.description.includes('Forbidden')) {
@@ -1139,14 +797,6 @@ bot.on('message', safeHandler(async (ctx) => {
         parse_mode: 'HTML', 
         disable_web_page_preview: true 
       });
-      
-      await ctx.telegram.sendMessage(
-        ADVISOR_ID,
-        caption,
-        { parse_mode: 'HTML', disable_web_page_preview: true }
-      );
-      
-      await ctx.forwardMessage(ADVISOR_ID, chatId, message.message_id);
     } catch (err) {
       try {
         await ctx.telegram.sendMessage(
@@ -1155,21 +805,9 @@ bot.on('message', safeHandler(async (ctx) => {
           { parse_mode: 'HTML', disable_web_page_preview: true }
         );
         
-        await ctx.telegram.sendMessage(
-          ADVISOR_ID, 
-          `📩 Новое сообщение из ЛС (не удалось переслать)\n👤 Имя: ${userName}\n🔖 Username: ${userUsername}\n🆔 ID: ${userId}\n⏰ Время: ${time}`,
-          { parse_mode: 'HTML', disable_web_page_preview: true }
-        );
-        
         if (message.text) {
           await ctx.telegram.sendMessage(
             ADMIN_CHAT_ID,
-            `📝 Текст сообщения: ${message.text}`,
-            { parse_mode: 'HTML', disable_web_page_preview: true }
-          );
-          
-          await ctx.telegram.sendMessage(
-            ADVISOR_ID,
             `📝 Текст сообщения: ${message.text}`,
             { parse_mode: 'HTML', disable_web_page_preview: true }
           );
@@ -1215,23 +853,11 @@ bot.on('message', safeHandler(async (ctx) => {
         { parse_mode: 'HTML', disable_web_page_preview: true }
       );
       
-      await ctx.telegram.sendMessage(
-        ADVISOR_ID, 
-        `✅ Комментарий успешно отправлен!\nПост: ${postLink}\nКомментарий: ${commentLink}`, 
-        { parse_mode: 'HTML', disable_web_page_preview: true }
-      );
-      
       processedPosts.add(message.forward_from_message_id);
     } catch (err) {
       try {
         await ctx.telegram.sendMessage(
           ADMIN_CHAT_ID, 
-          `❌ Не удалось отправить комментарий!\nОшибка: ${err?.message || err}`, 
-          { parse_mode: 'HTML', disable_web_page_preview: true }
-        );
-        
-        await ctx.telegram.sendMessage(
-          ADVISOR_ID, 
           `❌ Не удалось отправить комментарий!\nОшибка: ${err?.message || err}`, 
           { parse_mode: 'HTML', disable_web_page_preview: true }
         );
