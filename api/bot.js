@@ -1,8 +1,10 @@
-const { Telegraf, Markup } = require('telegraf');
+const { Telegraf } = require('telegraf');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+
 if (!BOT_TOKEN) {
-  console.error('❌ BOT_TOKEN не установлен!');
+  console.error('BOT_TOKEN не установлен!');
   process.exit(1);
 }
 
@@ -13,6 +15,9 @@ const MAIN_CHAT_ID = -1002894920473;
 const COMMENTS_CHAT_ID = -1002899007927;
 const ADMIN_IDS = [1465194766, 2032240231, 1319314897];
 const ADVISOR_ID = 2032240231;
+const SPECTRE_ID = 1465194766;
+
+const DEEPSEEK_ALLOWED_USERS = [SPECTRE_ID, ADVISOR_ID];
 
 const ALLOWED_CHATS = [
   { id: COMMENTS_CHAT_ID, name: 'Комментарии канала Я Спектр ♦️' },
@@ -60,14 +65,62 @@ const badWordsRhymes = {
   "бaн": "Банан"
 };
 
+function hasDeepSeekAccess(ctx) {
+  try { 
+    return ctx.from && DEEPSEEK_ALLOWED_USERS.includes(ctx.from.id); 
+  } catch { 
+    return false; 
+  }
+}
+
+async function callDeepSeekAPI(message) {
+  if (!DEEPSEEK_API_KEY) {
+    return `🤖 DeepSeek AI Response\n\nВаш запрос: "${message}"\n\nФункция находится в стадии разработки. Переменная окружения DEEPSEEK_API_KEY не установлена.\n\nПриносим извинения за неудобства.`;
+  }
+
+  try {
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          {
+            role: 'system',
+            content: 'Ты полезный ассистент. Отвечай на русском языке.'
+          },
+          {
+            role: 'user',
+            content: message
+          }
+        ],
+        stream: false
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error('DeepSeek API error:', error);
+    return `❌ Ошибка при обращении к DeepSeek API: ${error.message}\n\nФункция в разработке. Возможны временные сбои.`;
+  }
+}
+
 async function updateStickerCache() {
   try {
     const stickerSet = await bot.telegram.getStickerSet(STICKER_PACK_NAME);
     stickerCache.stickers = stickerSet.stickers;
     stickerCache.lastUpdated = Date.now();
-    console.log(`✨ Обновлен кэш стикеров: ${stickerCache.stickers.length} стикеров`);
+    console.log(`Обновлен кэш стикеров: ${stickerCache.stickers.length} стикеров`);
   } catch (error) {
-    console.error('❌ Ошибка при обновлении кэша стикеров:', error);
+    console.error('Ошибка при обновлении кэша стикеров:', error);
   }
 }
 
@@ -102,13 +155,13 @@ function safeHandler(handler) {
     try {
       await handler(ctx);
     } catch (err) {
-      console.error('❌ Ошибка в обработчике:', err);
+      console.error('Ошибка в обработчике:', err);
       try { 
         if (ctx && ctx.reply) {
-          await ctx.reply('❌ Произошла ошибка при обработке запроса. Попробуйте позже.'); 
+          await ctx.reply('Произошла ошибка при обработке запроса. Попробуйте позже.'); 
         }
       } catch (e) {
-        console.error('❌ Не удалось отправить сообщение об ошибке:', e);
+        console.error('Не удалось отправить сообщение об ошибке:', e);
       }
     }
   };
@@ -138,11 +191,11 @@ function isPrivate(ctx) {
   }
 }
 
-function restrictedCommand(handler, { adminOnly = false, advisorOnly = false } = {}) {
+function restrictedCommand(handler, { adminOnly = false, advisorOnly = false, deepseekOnly = false } = {}) {
   return safeHandler(async (ctx) => {
-    if (!isPrivate(ctx) && !isAdmin(ctx)) {
+    if (!isPrivate(ctx)) {
       try {
-        await ctx.reply('🌸 Эту команду можно использовать только в ЛС.', { 
+        await ctx.reply('Эту команду можно использовать только в ЛС.', { 
           reply_to_message_id: ctx.message?.message_id 
         });
       } catch (e) {
@@ -152,7 +205,7 @@ function restrictedCommand(handler, { adminOnly = false, advisorOnly = false } =
     
     if (adminOnly && !isAdmin(ctx)) {
       try {
-        await ctx.reply('🌸 Только для администраторов.', { 
+        await ctx.reply('Только для администраторов.', { 
           reply_to_message_id: ctx.message?.message_id 
         });
       } catch (e) {
@@ -162,7 +215,17 @@ function restrictedCommand(handler, { adminOnly = false, advisorOnly = false } =
     
     if (advisorOnly && !isAdvisor(ctx)) {
       try {
-        await ctx.reply('🌸 Эта команда доступна только Советчику.', { 
+        await ctx.reply('Эта команда доступна только Советчику.', { 
+          reply_to_message_id: ctx.message?.message_id 
+        });
+      } catch (e) {
+      }
+      return;
+    }
+
+    if (deepseekOnly && !hasDeepSeekAccess(ctx)) {
+      try {
+        await ctx.reply('Эта команда доступна только Советчику и Спектру.', { 
           reply_to_message_id: ctx.message?.message_id 
         });
       } catch (e) {
@@ -184,13 +247,13 @@ async function checkBotChats(botInstance) {
         
         await botInstance.telegram.sendMessage(
           ADMIN_CHAT_ID,
-          `🚫 Бот вышел из неразрешённого чата ${numericChatId}`,
+          `Бот вышел из неразрешённого чата ${numericChatId}`,
           { parse_mode: 'HTML' }
         );
         
-        console.log(`✅ Бот вышел из неразрешённого чата: ${numericChatId}`);
+        console.log(`Бот вышел из неразрешённого чата: ${numericChatId}`);
       } catch (e) {
-        console.error(`❌ Ошибка при выходе из чата ${numericChatId}:`, e);
+        console.error(`Ошибка при выходе из чата ${numericChatId}:`, e);
       } finally {
         ACTIVE_CHATS = ACTIVE_CHATS.filter(id => id !== chatId);
       }
@@ -212,13 +275,13 @@ bot.on('chat_member', async (ctx) => {
           
           await ctx.telegram.sendMessage(
             ADMIN_CHAT_ID,
-            `🚫 Бот вышел из неразрешённого чата ${chat.id}`,
+            `Бот вышел из неразрешённого чата ${chat.id}`,
             { parse_mode: 'HTML' }
           );
           
-          console.log(`✅ Бот вышел из неразрешённого чата: ${chat.id}`);
+          console.log(`Бот вышел из неразрешённого чата: ${chat.id}`);
         } catch (err) {
-          console.error('❌ Ошибка при выходе из чата:', err);
+          console.error('Ошибка при выходе из чата:', err);
         }
       } else {
         if (!ACTIVE_CHATS.includes(numericChatId)) {
@@ -226,16 +289,16 @@ bot.on('chat_member', async (ctx) => {
           
           await ctx.telegram.sendMessage(
             ADMIN_CHAT_ID,
-            `✅ Бот добавлен в разрешённый чат: ${numericChatId}`,
+            `Бот добавлен в разрешённый чат: ${numericChatId}`,
             { parse_mode: 'HTML' }
           );
           
-          console.log(`✅ Бот добавлен в разрешённый чат: ${numericChatId}`);
+          console.log(`Бот добавлен в разрешённый чат: ${numericChatId}`);
         }
       }
     }
   } catch (err) {
-    console.error('❌ Ошибка в обработчике chat_member:', err);
+    console.error('Ошибка в обработчике chat_member:', err);
   }
 });
 
@@ -246,7 +309,7 @@ bot.on('new_chat_members', safeHandler(async (ctx) => {
     if (newMember.is_bot) continue;
 
     const warningMessage = await ctx.reply(
-      `🌸 Привет, ${newMember.first_name || 'пользователь'}!\n\n` +
+      `Привет, ${newMember.first_name || 'пользователь'}!\n\n` +
       `Этот чат предназначен только для комментариев к постам канала. ` +
       `Пожалуйста, покиньте чат в течение 30 секунд, иначе вы будете исключены.\n\n` +
       `Если останетесь, мы будем вынуждены принять меры.`,
@@ -274,7 +337,7 @@ bot.on('new_chat_members', safeHandler(async (ctx) => {
           });
           
           const banMessage = await ctx.reply(
-            `❌ Пользователь ${newMember.first_name || 'без имени'} был исключен за нарушение правил чата.`,
+            `Пользователь ${newMember.first_name || 'без имени'} был исключен за нарушение правил чата.`,
             { reply_to_message_id: ctx.message.message_id }
           );
           
@@ -287,7 +350,7 @@ bot.on('new_chat_members', safeHandler(async (ctx) => {
 
           await ctx.telegram.sendMessage(
             ADMIN_CHAT_ID,
-            `👮 Пользователь ${newMember.first_name || 'без имени'} (ID: ${newMember.id}) был исключен из чата комментариев за нарушение правил.`,
+            `Пользователь ${newMember.first_name || 'без имени'} (ID: ${newMember.id}) был исключен из чата комментариев за нарушение правил.`,
             { parse_mode: 'HTML' }
           );
         }
@@ -312,7 +375,7 @@ bot.on('left_chat_member', safeHandler(async (ctx) => {
         ctx.chat.id,
         warningInfo.warningMessageId,
         null,
-        `✅ Пользователь ${leftMember.first_name || 'без имени'} покинул чат добровольно. Спасибо за понимание!`,
+        `Пользователь ${leftMember.first_name || 'без имени'} покинул чат добровольно. Спасибо за понимание!`,
         { parse_mode: 'HTML' }
       );
     } catch (error) {
@@ -326,16 +389,45 @@ bot.on('callback_query', async (ctx) => {
   try {
     await ctx.answerCbQuery();
   } catch (error) {
-    console.error('❌ Ошибка в обработчике callback_query:', error);
+    console.error('Ошибка в обработчике callback_query:', error);
   }
 });
+
+bot.command('deepseek', restrictedCommand(async (ctx) => {
+  const userMessage = ctx.message.text.replace('/deepseek', '').trim();
+  
+  if (!userMessage) {
+    await ctx.reply(
+      `🤖 <b>DeepSeek AI Assistant</b>\n\n` +
+      `Ожидаю ваш текстовый запрос...\n\n` +
+      `Пример использования:\n` +
+      `<code>/deepseek Напиши код на Python для сортировки пузырьком</code>\n\n` +
+      `⚠️ <i>Функция находится в разработке. Возможны ошибки и нестабильная работа.</i>`,
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  await ctx.sendChatAction('typing');
+
+  try {
+    const response = await callDeepSeekAPI(userMessage);
+    await ctx.reply(response);
+  } catch (error) {
+    console.error('Ошибка DeepSeek:', error);
+    await ctx.reply(
+      'Произошла ошибка при обращении к DeepSeek. Пожалуйста, попробуйте позже.',
+      { parse_mode: 'HTML' }
+    );
+  }
+}, { deepseekOnly: true }));
 
 bot.command('shiza', restrictedCommand(async (ctx) => {
   const success = await sendRandomSticker(MAIN_CHAT_ID);
   if (success) {
-    await ctx.reply('✅ Стикер отправлен в основной чат');
+    await ctx.reply('Стикер отправлен в основной чат');
   } else {
-    await ctx.reply('❌ Не удалось отправить стикер');
+    await ctx.reply('Не удалось отправить стикер');
   }
 }, { advisorOnly: true }));
 
@@ -346,13 +438,18 @@ bot.start(restrictedCommand(async (ctx) => {
 
   if (isAdmin(ctx)) {
     let greeting = '';
-    if (userID === 1465194766) greeting = `👑 Приветствую, Великий Спектр ♦️! Ваша воля — закон для этого бота.`;
-    else if (userID === 2032240231) greeting = `⚜️ Здравствуйте, Мудрый Советчик 📜! Готов выполнять ваши приказы и поддерживать порядок в канале.`;
-    else if (userID === 1319314897) greeting = `🏛️ Приветствую, Досточтимый Устричный Комиссар 🏛️! Ваше присутствие облагораживает этот бот.`;
+    if (userID === SPECTRE_ID) greeting = `Приветствую, Великий Спектр ♦️! Ваша воля — закон для этого бота.`;
+    else if (userID === ADVISOR_ID) greeting = `Здравствуйте, Мудрый Советчик 📜! Готов выполнять ваши приказы и поддерживать порядок в канале.`;
+    else if (userID === 1319314897) greeting = `Приветствую, Досточтимый Устричный Комиссар 🏛️! Ваше присутствие облагораживает этот бот.`;
+    
+    if (hasDeepSeekAccess(ctx)) {
+      greeting += `\n\n🤖 Доступен DeepSeek AI:\n/deepseek [запрос] - запрос к AI ассистенту`;
+    }
+    
     greeting += `\n\nИспользуйте /help для списка команд.`;
-    await ctx.reply(greeting);
+    await ctx.reply(greeting, { parse_mode: 'HTML' });
   } else {
-    const greeting = `🌸 Здравствуйте, ${firstName ? firstName : 'пользователь'}!
+    const greeting = `Здравствуйте, ${firstName ? firstName : 'пользователь'}!
 Вы обратились в бот обратной связи канала Я Спектр ♦️.
 
 💬 Здесь можно:
@@ -371,7 +468,7 @@ bot.start(restrictedCommand(async (ctx) => {
 
 bot.help(restrictedCommand(async (ctx) => {
   if (isAdmin(ctx)) {
-    let adminHelpText = `<b>🛠 Команды админов:</b>
+    let adminHelpText = `<b>Команды админов:</b>
 
 /start — запуск бота
 /help — показать это сообщение
@@ -383,6 +480,13 @@ bot.help(restrictedCommand(async (ctx) => {
 /appeal — анкета для обжалования наказания
 /shiza — отправить случайный стикер из пака Шизы в основной чат (только для Советчика)`;
 
+    if (hasDeepSeekAccess(ctx)) {
+      adminHelpText += `
+
+<b>Команды DeepSeek (только для Спектра и Советчика):</b>
+/deepseek [запрос] — запрос к DeepSeek AI`;
+    }
+
     adminHelpText += `
 
 <b>Как отвечать</b>:
@@ -391,7 +495,7 @@ bot.help(restrictedCommand(async (ctx) => {
     
     await ctx.reply(adminHelpText, { parse_mode: 'HTML', disable_web_page_preview: true });
   } else {
-    const userHelpText = `ℹ️ Команды пользователя:
+    const userHelpText = `Команды пользователя:
 
 /start — запустить бота
 /help — показать это сообщение
@@ -403,19 +507,18 @@ bot.help(restrictedCommand(async (ctx) => {
 }));
 
 bot.command('info', restrictedCommand(async (ctx) => {
-  const infoText = `⚙️ О боте
-Версия: 0.0.1
-ИИ: Red-AI 0.1
-Разработчики: <a href="https://t.me/red_star_development">Красная звезда</a>`;
+  const infoText = `О боте
+Версия: 1.0.0
+DeepSeek: ${DEEPSEEK_API_KEY ? 'API ключ установлен' : 'API ключ не установлен'}`;
   await ctx.reply(infoText, { parse_mode: 'HTML', disable_web_page_preview: true });
 }));
 
 bot.command('test', restrictedCommand(async (ctx) => {
-  await ctx.reply('✅ Бот активен и работает в штатном режиме!');
+  await ctx.reply('Бот активен и работает в штатном режиме!');
 }, { adminOnly: true }));
 
 bot.command('allowed_chats', restrictedCommand(async (ctx) => {
-  let chatList = '📝 Разрешённые чаты:\n';
+  let chatList = 'Разрешённые чаты:\n';
   ALLOWED_CHATS.forEach(chat => {
     chatList += `• ${chat.name}\nID: ${chat.id}\n`;
   });
@@ -430,7 +533,7 @@ bot.command('comment_text', restrictedCommand(async (ctx) => {
 bot.command('adm', safeHandler(async (ctx) => {
   if (!isPrivate(ctx) && !isAdmin(ctx)) {
     try {
-      await ctx.reply('🌸 Эту команду можно использовать только в ЛС.', { 
+      await ctx.reply('Эту команду можно использовать только в ЛС.', { 
         reply_to_message_id: ctx.message?.message_id 
       });
     } catch (e) {}
@@ -440,7 +543,7 @@ bot.command('adm', safeHandler(async (ctx) => {
   const userName = ctx.from.first_name || ctx.from.username || '';
   const currentTime = getMoscowTime();
   
-  const admText = `<b>📜 Анкета кандидата в администрацию</b>
+  const admText = `<b>Анкета кандидата в администрацию</b>
 
 💬 Привет, ${userName}! Заполни эту анкету, если хочешь стать администратором. Отвечай честно — оцениваем не только опыт, но и личные качества.
 
@@ -474,14 +577,14 @@ bot.command('adm', safeHandler(async (ctx) => {
 bot.command('appeal', safeHandler(async (ctx) => {
   if (!isPrivate(ctx) && !isAdmin(ctx)) {
     try {
-      await ctx.reply('🌸 Эту команду можно использовать только в ЛС.', { 
+      await ctx.reply('Эту команду можно использовать только в ЛС.', { 
         reply_to_message_id: ctx.message?.message_id 
       });
     } catch (e) {}
     return;
   }
   
-  const appealText = `<b>📄 АНКЕТА ДЛА ОБЖАЛОВАНИЯ НАКАЗАНИЯ</b>
+  const appealText = `<b>АНКЕТА ДЛА ОБЖАЛОВАНИЯ НАКАЗАНИЯ</b>
 
 <b>1. Твой ник в Telegram:</b>
 <em>(укажи имя, под которым тебя можно найти)</em>
@@ -527,7 +630,7 @@ bot.on('message', safeHandler(async (ctx) => {
     const userName = ctx.from.first_name || ctx.from.username || '';
     const currentTime = getMoscowTime();
     
-    const admText = `<b>📜 Анкета кандидата в администрации</b>
+    const admText = `<b>Анкета кандидата в администрации</b>
 
 💬 Привет, ${userName}! Заполни эту анкету, если хочешь стать администратором. Отвечай честно — оцениваем не только опыт, но и личные качества.
 
@@ -580,7 +683,7 @@ bot.on('message', safeHandler(async (ctx) => {
       
       if (!ALLOWED_CHATS.some(chat => chat.id === Number(chatId))) {
         try {
-          await ctx.reply('🚫 Этот чат не разрешён для работы бота.\n\n📢 Подписывайтесь на наш канал: https://t.me/red_star_development', { 
+          await ctx.reply('Этот чат не разрешён для работы бота.\n\nПо вопросам работы бота обращайтесь к администрации.', { 
             parse_mode: 'HTML', 
             disable_web_page_preview: true 
           });
@@ -674,22 +777,22 @@ bot.on('message', safeHandler(async (ctx) => {
         });
       }
       
-      await ctx.reply('✅ Ответ отправлен пользователю.', { 
+      await ctx.reply('Ответ отправлен пользователю.', { 
         reply_to_message_id: message.message_id 
       });
       
       await ctx.telegram.sendMessage(
         ADMIN_CHAT_ID,
-        `📨 Ответ отправлен пользователю ${originalId}`,
+        `Ответ отправлен пользователю ${originalId}`,
         { parse_mode: 'HTML' }
       );
     } catch (err) {
       if (err.description && err.description.includes('Forbidden')) {
-        await ctx.reply('❌ Не удалось отправить ответ: пользователь заблокировал бота.', { 
+        await ctx.reply('Не удалось отправить ответ: пользователь заблокировал бота.', { 
           reply_to_message_id: message.message_id 
         });
       } else {
-        await ctx.reply('❌ Не удалось отправить ответ.', { 
+        await ctx.reply('Не удалось отправить ответ.', { 
           reply_to_message_id: message.message_id 
         });
       }
@@ -715,7 +818,7 @@ bot.on('message', safeHandler(async (ctx) => {
         messageId: messageId
       };
       
-      await ctx.reply('✅ Ссылка принята. Следующее отправленное вами сообщение будет переслано как ответ.');
+      await ctx.reply('Ссылка принята. Следующее отправленное вами сообщение будет переслано как ответ.');
       return;
     }
   }
@@ -782,22 +885,22 @@ bot.on('message', safeHandler(async (ctx) => {
         });
       }
       
-      await ctx.reply('✅ Сообщение успешно отправлено.');
+      await ctx.reply('Сообщение успешно отправлено.');
       
       await ctx.telegram.sendMessage(
         ADMIN_CHAT_ID,
-        `📨 Сообщение отправлено в чат ${targetChat} как ответ на сообщение ${targetMessage}`,
+        `Сообщение отправлено в чат ${targetChat} как ответ на сообщение ${targetMessage}`,
         { parse_mode: 'HTML' }
       );
       
       delete REPLY_LINKS[userId];
     } catch (err) {
       if (err.description && err.description.includes('Forbidden')) {
-        await ctx.reply('❌ Не удалось отправить сообщение: бот не имеет доступа к чату или был заблокирован.');
+        await ctx.reply('Не удалось отправить сообщение: бот не имеет доступа к чату или был заблокирован.');
       } else if (err.description && err.description.includes('chat not found')) {
-        await ctx.reply('❌ Не удалось отправить сообщение: чат не найден.');
+        await ctx.reply('Не удалось отправить сообщение: чат не найден.');
       } else {
-        await ctx.reply(`❌ Ошибка при пересылке: ${err?.description || err?.message || 'Неизвестная ошибка'}`);
+        await ctx.reply(`Ошибка при пересылке: ${err?.description || err?.message || 'Неизвестная ошибка'}`);
       }
     }
     return;
@@ -807,7 +910,7 @@ bot.on('message', safeHandler(async (ctx) => {
     const userName = message.from.first_name || 'Без имени';
     const userUsername = message.from.username ? '@' + message.from.username : 'нет username';
     const time = getMoscowTime();
-    const caption = `📩 Новое сообщение из ЛС\n👤 Имя: ${userName}\n🔖 Username: ${userUsername}\n🆔 ID: ${userId}\n⏰ Время: ${time}`;
+    const caption = `Новое сообщение из ЛС\n👤 Имя: ${userName}\n🔖 Username: ${userUsername}\n🆔 ID: ${userId}\n⏰ Время: ${time}`;
 
     try {
       await ctx.forwardMessage(ADMIN_CHAT_ID, chatId, message.message_id);
@@ -819,14 +922,14 @@ bot.on('message', safeHandler(async (ctx) => {
       try {
         await ctx.telegram.sendMessage(
           ADMIN_CHAT_ID, 
-          `📩 Новое сообщение из ЛС (не удалось переслать)\n👤 Имя: ${userName}\n🔖 Username: ${userUsername}\n🆔 ID: ${userId}\n⏰ Время: ${time}`,
+          `Новое сообщение из ЛС (не удалось переслать)\n👤 Имя: ${userName}\n🔖 Username: ${userUsername}\n🆔 ID: ${userId}\n⏰ Время: ${time}`,
           { parse_mode: 'HTML', disable_web_page_preview: true }
         );
         
         if (message.text) {
           await ctx.telegram.sendMessage(
             ADMIN_CHAT_ID,
-            `📝 Текст сообщения: ${message.text}`,
+            `Текст сообщения: ${message.text}`,
             { parse_mode: 'HTML', disable_web_page_preview: true }
           );
         }
@@ -867,7 +970,7 @@ bot.on('message', safeHandler(async (ctx) => {
 
       await ctx.telegram.sendMessage(
         ADMIN_CHAT_ID, 
-        `✅ Комментарий успешно отправлен!\nПост: ${postLink}\nКомментарий: ${commentLink}`, 
+        `Комментарий успешно отправлен!\nПост: ${postLink}\nКомментарий: ${commentLink}`, 
         { parse_mode: 'HTML', disable_web_page_preview: true }
       );
       
@@ -876,7 +979,7 @@ bot.on('message', safeHandler(async (ctx) => {
       try {
         await ctx.telegram.sendMessage(
           ADMIN_CHAT_ID, 
-          `❌ Не удалось отправить комментарий!\nОшибка: ${err?.message || err}`, 
+          `Не удалось отправить комментарий!\nОшибка: ${err?.message || err}`, 
           { parse_mode: 'HTML', disable_web_page_preview: true }
         );
       } catch (e) {}
