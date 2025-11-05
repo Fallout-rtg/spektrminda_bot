@@ -998,12 +998,18 @@ setTimeout(() => {
 module.exports = async (req, res) => {
   try {
     if (req.method === 'POST') {
+      console.log('📨 Received POST request');
       await bot.handleUpdate(req.body);
-      res.status(200).send('OK');
+      return res.status(200).json({ status: 'ok' });
     } else {
-      res.status(200).send('Bot is running.');
+      console.log('ℹ️ Received GET request');
+      return res.status(200).json({ 
+        status: 'Bot is running',
+        timestamp: new Date().toISOString()
+      });
     }
   } catch (error) {
-    res.status(200).send('OK');
+    console.error('❌ Error in handler:', error);
+    return res.status(200).json({ status: 'ok' });
   }
 };
