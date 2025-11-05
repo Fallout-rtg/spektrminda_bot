@@ -1,8 +1,6 @@
 const { Telegraf } = require('telegraf');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const GIGACHAT_CLIENT_ID = process.env.GIGACHAT_CLIENT_ID;
-const GIGACHAT_CLIENT_SECRET = process.env.GIGACHAT_CLIENT_SECRET;
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN не установлен!');
@@ -17,8 +15,6 @@ const COMMENTS_CHAT_ID = -1002899007927;
 const ADMIN_IDS = [1465194766, 2032240231, 1319314897];
 const ADVISOR_ID = 2032240231;
 const SPECTRE_ID = 1465194766;
-
-const GIGACHAT_ALLOWED_USERS = [SPECTRE_ID, ADVISOR_ID];
 
 const ALLOWED_CHATS = [
   { id: COMMENTS_CHAT_ID, name: 'Комментарии канала Я Спектр ♦️' },
@@ -65,90 +61,6 @@ const badWordsRhymes = {
   "бан": "🍌 Банан",
   "бaн": "🍌 Банан"
 };
-
-function hasGigaChatAccess(ctx) {
-  try { 
-    return ctx.from && GIGACHAT_ALLOWED_USERS.includes(ctx.from.id); 
-  } catch { 
-    return false; 
-  }
-}
-
-async function getGigaChatToken() {
-  console.log('🔑 Получение токена GigaChat...');
-  try {
-    const credentials = Buffer.from(`${GIGACHAT_CLIENT_ID}:${GIGACHAT_CLIENT_SECRET}`).toString('base64');
-    
-    const response = await fetch('https://ngw.devices.sberbank.ru:9443/api/v2/oauth', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${credentials}`,
-        'RqUID': `telegram_bot_${Date.now()}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
-      },
-      body: 'scope=GIGACHAT_API_PERS'
-    });
-
-    if (!response.ok) {
-      throw new Error(`❌ Ошибка получения токена: ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log('✅ Токен GigaChat успешно получен');
-    return data.access_token;
-  } catch (error) {
-    console.error('❌ Ошибка при получении токена GigaChat:', error);
-    throw error;
-  }
-}
-
-async function callGigaChatAPI(message) {
-  if (!GIGACHAT_CLIENT_ID || !GIGACHAT_CLIENT_SECRET) {
-    console.log('⚠️ Переменные окружения GigaChat не установлены');
-    return `🤖 GigaChat AI Response\n\nВаш запрос: "${message}"\n\n🔧 Функция находится в стадии настройки. Переменные окружения GIGACHAT_CLIENT_ID и GIGACHAT_CLIENT_SECRET не установлены.\n\n🔄 Приносим извинения за неудобства.`;
-  }
-
-  try {
-    console.log('🚀 Отправка запроса к GigaChat API...');
-    const accessToken = await getGigaChatToken();
-    
-    const response = await fetch('https://gigachat.devices.sberbank.ru/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'GigaChat',
-        messages: [
-          {
-            role: 'system',
-            content: 'Ты полезный ассистент. Отвечай на русском языке кратко и по делу.'
-          },
-          {
-            role: 'user',
-            content: message
-          }
-        ],
-        temperature: 0.7,
-        stream: false
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`❌ API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log('✅ Ответ от GigaChat получен успешно');
-    return data.choices[0].message.content;
-  } catch (error) {
-    console.error('❌ Ошибка GigaChat API:', error);
-    return `❌ Ошибка при обращении к GigaChat API: ${error.message}\n\n🔧 Функция в разработке. Возможны временные сбои. 🕒`;
-  }
-}
 
 async function updateStickerCache() {
   try {
@@ -230,7 +142,7 @@ function isPrivate(ctx) {
   }
 }
 
-function restrictedCommand(handler, { adminOnly = false, advisorOnly = false, gigachatOnly = false } = {}) {
+function restrictedCommand(handler, { adminOnly = false, advisorOnly = false } = {}) {
   return safeHandler(async (ctx) => {
     if (!isPrivate(ctx)) {
       try {
@@ -255,16 +167,6 @@ function restrictedCommand(handler, { adminOnly = false, advisorOnly = false, gi
     if (advisorOnly && !isAdvisor(ctx)) {
       try {
         await ctx.reply('📜 Эта команда доступна только Советчику. 🏛️', { 
-          reply_to_message_id: ctx.message?.message_id 
-        });
-      } catch (e) {
-      }
-      return;
-    }
-
-    if (gigachatOnly && !hasGigaChatAccess(ctx)) {
-      try {
-        await ctx.reply('🚫 Эта команда доступна только Советчику и Спектру. 👑🏛️', { 
           reply_to_message_id: ctx.message?.message_id 
         });
       } catch (e) {
@@ -437,37 +339,6 @@ bot.on('callback_query', async (ctx) => {
   }
 });
 
-bot.command('gigachat', restrictedCommand(async (ctx) => {
-  const userMessage = ctx.message.text.replace('/gigachat', '').trim();
-  
-  if (!userMessage) {
-    await ctx.reply(
-      `🤖 <b>GigaChat AI Assistant</b>\n\n` +
-      `💭 Ожидаю ваш текстовый запрос...\n\n` +
-      `📝 Пример использования:\n` +
-      `<code>/gigachat Напиши код на Python для сортировки пузырьком</code>\n\n` +
-      `⚠️ <i>Функция находится в разработке. Возможны ошибки и нестабильная работа. 🔧</i>`,
-      { parse_mode: 'HTML' }
-    );
-    return;
-  }
-
-  console.log(`📨 Запрос GigaChat от пользователя ${ctx.from.id}: ${userMessage.substring(0, 50)}...`);
-  await ctx.sendChatAction('typing');
-
-  try {
-    const response = await callGigaChatAPI(userMessage);
-    await ctx.reply(response);
-    console.log(`✅ Ответ GigaChat отправлен пользователю ${ctx.from.id}`);
-  } catch (error) {
-    console.error(`❌ Ошибка GigaChat для пользователя ${ctx.from.id}:`, error);
-    await ctx.reply(
-      '❌ Произошла ошибка при обращении к GigaChat. Пожалуйста, попробуйте позже. 🔄',
-      { parse_mode: 'HTML' }
-    );
-  }
-}, { gigachatOnly: true }));
-
 bot.command('shiza', restrictedCommand(async (ctx) => {
   console.log(`🎰 Команда /shiza от пользователя ${ctx.from.id}`);
   const success = await sendRandomSticker(MAIN_CHAT_ID);
@@ -490,10 +361,6 @@ bot.start(restrictedCommand(async (ctx) => {
     if (userID === SPECTRE_ID) greeting = `👑 Приветствую, Великий Спектр ♦️! Ваша воля — закон для этого бота.`;
     else if (userID === ADVISOR_ID) greeting = `⚜️ Здравствуйте, Мудрый Советчик 📜! Готов выполнять ваши приказы и поддерживать порядок в канале.`;
     else if (userID === 1319314897) greeting = `🏛️ Приветствую, Досточтимый Устричный Комиссар 🏛️! Ваше присутствие облагораживает этот бот.`;
-    
-    if (hasGigaChatAccess(ctx)) {
-      greeting += `\n\n🤖 Доступен GigaChat AI:\n/gigachat [запрос] - запрос к AI ассистенту 🧠`;
-    }
     
     greeting += `\n\n📋 Используйте /help для списка команд.`;
     await ctx.reply(greeting, { parse_mode: 'HTML' });
@@ -518,7 +385,7 @@ bot.start(restrictedCommand(async (ctx) => {
 bot.help(restrictedCommand(async (ctx) => {
   console.log(`❓ Команда /help от пользователя ${ctx.from.id}`);
   if (isAdmin(ctx)) {
-    let adminHelpText = `<b>🛠️ Команды админов:</b>
+    const adminHelpText = `<b>🛠️ Команды админов:</b>
 
 /start — запуск бота 🚀
 /help — показать это сообщение 📋
@@ -528,16 +395,7 @@ bot.help(restrictedCommand(async (ctx) => {
 /comment_text — показать текст комментариев под постами 💬
 /adm — анкета на вступление в Совет Элит 📜
 /appeal — анкета для обжалования наказания 🛡️
-/shiza — отправить случайный стикер из пака Шизы в основной чат (только для Советчика) 🎰`;
-
-    if (hasGigaChatAccess(ctx)) {
-      adminHelpText += `
-
-<b>🤖 Команды GigaChat (только для Спектра и Советчика):</b>
-/gigachat [запрос] — запрос к GigaChat AI 🧠`;
-    }
-
-    adminHelpText += `
+/shiza — отправить случайный стикер из пака Шизы в основной чат (только для Советчика) 🎰
 
 <b>💡 Как отвечать:</b>
 💬 В ЛС: пересланное сообщение от пользователя -> ответьте на него — бот пересылает ответ пользователю.
@@ -557,11 +415,10 @@ bot.help(restrictedCommand(async (ctx) => {
 }));
 
 bot.command('info', restrictedCommand(async (ctx) => {
-  const gigachatStatus = GIGACHAT_CLIENT_ID && GIGACHAT_CLIENT_SECRET ? '🔑 API ключи установлены' : '❌ API ключи не установлены';
   const infoText = `⚙️ О боте
-Версия: 2.0.0 🎉
-GigaChat: ${gigachatStatus}
-Обновлено: интеграция с GigaChat AI 🤖`;
+Версия: 3.0.0 🎉
+Функционал: управление чатами, обратная связь, модерация
+Статус: работает стабильно ✅`;
   await ctx.reply(infoText, { parse_mode: 'HTML', disable_web_page_preview: true });
 }));
 
@@ -1062,7 +919,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({ 
         status: 'Bot is running',
         timestamp: new Date().toISOString(),
-        version: '2.0.0'
+        version: '3.0.0'
       });
     }
   } catch (error) {
